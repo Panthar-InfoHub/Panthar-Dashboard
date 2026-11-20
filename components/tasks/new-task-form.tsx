@@ -7,9 +7,11 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ArrowLeft, Plus, Check, Calendar as CalendarIcon, ChevronsUpDown, X } from "lucide-react";
+import { ArrowLeft, Plus, Check, Calendar as CalendarIcon, ChevronsUpDown, X, Paperclip, Loader2 } from "lucide-react";
 import Link from "next/link";
 import { createTaskAction, updateTaskAction } from "@/lib/actions/task.actions";
+import { createAttachmentUploadAction, confirmAttachmentUploadAction } from "@/lib/actions/attachment.actions";
+import { formatBytes, getFileIcon } from "@/components/tasks/task-attachments";
 import { format } from "date-fns";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -36,16 +38,21 @@ export function NewTaskForm({
   projects, 
   employees,
   initialData,
-  canAssign
+  canAssign,
+  canManageAttachments = false
 }: { 
   projects: { id: string; name: string }[];
   employees: { id: string; firstName: string; lastName: string }[];
   initialData?: TaskFormInitialData;
   canAssign?: boolean;
+  canManageAttachments?: boolean;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [openAssignee, setOpenAssignee] = useState(false);
+  const [pendingFiles, setPendingFiles] = useState<{ file: File; id: string }[]>([]);
+  const [uploadProgress, setUploadProgress] = useState<Record<string, number>>({});
+  const [isUploading, setIsUploading] = useState(false);
   
   const [newTask, setNewTask] = useState<{
     title: string;
@@ -92,6 +99,84 @@ export function NewTaskForm({
     toggleAssignee(id);
   };
 
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files || e.target.files.length === 0) return;
+    const files = Array.from(e.target.files);
+    const validFiles: { file: File; id: string }[] = [];
+    let hasOversized = false;
+
+    for (const file of files) {
+      if (file.size > 52_428_800) {
+        hasOversized = true;
+      } else {
+        const id = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `f-${Date.now()}-${Math.random()}`;
+        validFiles.push({ file, id });
+      }
+    }
+
+    if (hasOversized) {
+      toast.error("Upload failed. The file is over 50 MB.");
+    }
+
+    if (validFiles.length > 0) {
+      setPendingFiles((prev) => [...prev, ...validFiles]);
+    }
+
+    e.target.value = "";
+  };
+
+  const removePendingFile = (id: string) => {
+    setPendingFiles((prev) => prev.filter((f) => f.id !== id));
+  };
+
+  const uploadSingleFile = async (
+    taskId: string,
+    fileItem: { file: File; id: string },
+    onProgress: (percent: number) => void
+  ) => {
+    const { file } = fileItem;
+
+    // Step A: Request presigned PUT URL
+    const { uploadUrl, key } = await createAttachmentUploadAction(taskId, {
+      fileName: file.name,
+      contentType: file.type || "application/octet-stream",
+      size: file.size,
+    });
+
+    // Step B: Upload file via XHR to monitor progress
+    await new Promise<void>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("PUT", uploadUrl, true);
+      xhr.setRequestHeader("Content-Type", file.type || "application/octet-stream");
+
+      xhr.upload.onprogress = (evt) => {
+        if (evt.lengthComputable) {
+          const percent = Math.round((evt.loaded / evt.total) * 100);
+          onProgress(percent);
+        }
+      };
+
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          resolve();
+        } else {
+          reject(new Error(`Storage rejected upload with status ${xhr.status}. Link may have expired.`));
+        }
+      };
+
+      xhr.onerror = () => reject(new Error("Network error during file upload. Please check your connection."));
+      xhr.ontimeout = () => reject(new Error("File upload timed out."));
+
+      xhr.send(file);
+    });
+
+    // Step C: Confirm upload with server
+    await confirmAttachmentUploadAction(taskId, {
+      key,
+      fileName: file.name,
+    });
+  };
+
   const handleCreateTask = () => {
     if (!newTask.title) {
       toast.error("Task title is required");
@@ -102,41 +187,101 @@ export function NewTaskForm({
       return;
     }
     
-    startTransition(() => {
+    startTransition(async () => {
       if (initialData) {
-        updateTaskAction(initialData.id, {
-          title: newTask.title,
-          description: newTask.description,
-          projectId: newTask.project,
-          assigneeIds: newTask.assigneeIds,
-          priority: newTask.priority,
-          startDate: newTask.startDate,
-          dueDate: newTask.dueDate,
-          blockers: newTask.blockers
-        }).then(() => {
-          toast.success("Task updated successfully!");
+        try {
+          await updateTaskAction(initialData.id, {
+            title: newTask.title,
+            description: newTask.description,
+            projectId: newTask.project,
+            assigneeIds: newTask.assigneeIds,
+            priority: newTask.priority,
+            startDate: newTask.startDate,
+            dueDate: newTask.dueDate,
+            blockers: newTask.blockers,
+          });
+
+          // Upload any newly selected pending files
+          if (pendingFiles.length > 0) {
+            setIsUploading(true);
+            const failedFiles: string[] = [];
+
+            for (const item of pendingFiles) {
+              try {
+                await uploadSingleFile(initialData.id, item, (percent) => {
+                  setUploadProgress((prev) => ({ ...prev, [item.id]: percent }));
+                });
+              } catch (err: unknown) {
+                console.error("Upload failed for:", item.file.name, err);
+                failedFiles.push(item.file.name);
+              }
+            }
+            setIsUploading(false);
+
+            if (failedFiles.length > 0) {
+              toast.error(`Task updated, but failed to upload: ${failedFiles.join(", ")}`);
+            } else {
+              toast.success("Task updated and files attached!");
+            }
+          } else {
+            toast.success("Task updated successfully!");
+          }
+
           router.refresh();
           router.push(`/tasks/${initialData.id}`);
-        }).catch((err: unknown) => {
+        } catch (err: unknown) {
+          setIsUploading(false);
           toast.error(err instanceof Error ? err.message : "Failed to update task");
-        });
+        }
       } else {
-        createTaskAction({
-          title: newTask.title,
-          description: newTask.description,
-          projectId: newTask.project,
-          assigneeIds: newTask.assigneeIds,
-          priority: newTask.priority,
-          startDate: newTask.startDate,
-          dueDate: newTask.dueDate,
-          blockers: newTask.blockers
-        }).then(() => {
-          toast.success("Task created successfully!");
+        try {
+          const res = await createTaskAction({
+            title: newTask.title,
+            description: newTask.description,
+            projectId: newTask.project,
+            assigneeIds: newTask.assigneeIds,
+            priority: newTask.priority,
+            startDate: newTask.startDate,
+            dueDate: newTask.dueDate,
+            blockers: newTask.blockers,
+          });
+
+          const taskId = res.taskId;
+
+          // Upload attachments if any selected
+          if (pendingFiles.length > 0) {
+            setIsUploading(true);
+            const failedFiles: string[] = [];
+
+            for (const item of pendingFiles) {
+              try {
+                await uploadSingleFile(taskId, item, (percent) => {
+                  setUploadProgress((prev) => ({ ...prev, [item.id]: percent }));
+                });
+              } catch (err: unknown) {
+                console.error("Upload failed for:", item.file.name, err);
+                failedFiles.push(item.file.name);
+              }
+            }
+            setIsUploading(false);
+
+            if (failedFiles.length > 0) {
+              toast.error(`Task created, but failed to upload: ${failedFiles.join(", ")}`);
+              router.refresh();
+              router.push(`/tasks/${taskId}`);
+              return;
+            }
+            toast.success("Task created and files attached!");
+          } else {
+            toast.success("Task created successfully!");
+          }
+
           router.refresh();
           router.push("/tasks");
-        }).catch((err: unknown) => {
+        } catch (err: unknown) {
+          setIsUploading(false);
           toast.error(err instanceof Error ? err.message : "Failed to create task");
-        });
+        }
       }
     });
   };
@@ -162,8 +307,17 @@ export function NewTaskForm({
           <Button variant="outline" asChild disabled={isPending} className="flex-1 sm:flex-initial">
             <Link href="/tasks">Cancel</Link>
           </Button>
-          <Button onClick={handleCreateTask} className="flex-1 sm:flex-initial sm:px-8" disabled={isPending}>
-            {isPending ? "Saving..." : (initialData ? "Save Changes" : "Create Task")}
+          <Button onClick={handleCreateTask} className="flex-1 sm:flex-initial sm:px-8" disabled={isPending || isUploading}>
+            {isUploading ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Uploading files...
+              </>
+            ) : isPending ? (
+              "Saving..."
+            ) : (
+              initialData ? "Save Changes" : "Create Task"
+            )}
           </Button>
         </div>
       </div>
@@ -205,6 +359,81 @@ export function NewTaskForm({
                   className="min-h-[100px] resize-none"
                 />
               </div>
+
+              {/* Attachments Section */}
+              {canManageAttachments && (
+                <div className="space-y-3 pt-4 border-t border-border/50">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+                      <Paperclip className="h-3.5 w-3.5" /> Attach Files
+                    </label>
+                    <span className="text-[11px] text-muted-foreground">Up to 50 MB per file</span>
+                  </div>
+
+                  <input
+                    type="file"
+                    id="task-file-upload"
+                    multiple
+                    className="hidden"
+                    onChange={handleFileSelect}
+                    disabled={isPending || isUploading}
+                  />
+
+                  <div className="flex flex-col gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="w-full justify-center border-dashed gap-2 h-9 text-xs"
+                      onClick={() => document.getElementById("task-file-upload")?.click()}
+                      disabled={isPending || isUploading}
+                    >
+                      <Paperclip className="h-3.5 w-3.5 text-muted-foreground" />
+                      <span>Choose files to attach</span>
+                    </Button>
+
+                    {pendingFiles.length > 0 && (
+                      <div className="space-y-1.5 mt-2">
+                        {pendingFiles.map(({ file, id }) => {
+                          const progress = uploadProgress[id];
+                          return (
+                            <div
+                              key={id}
+                              className="flex items-center justify-between gap-2 px-3 py-2 rounded-md border border-border/50 bg-background text-xs"
+                            >
+                              <div className="flex items-center gap-2 min-w-0 flex-1">
+                                {getFileIcon(file.name, file.type)}
+                                <span className="font-medium truncate" title={file.name}>
+                                  {file.name}
+                                </span>
+                                <span className="text-muted-foreground text-[11px] shrink-0">
+                                  ({formatBytes(file.size)})
+                                </span>
+                                {progress !== undefined && progress < 100 && (
+                                  <span className="text-primary text-[10px] font-mono shrink-0">
+                                    {progress}%
+                                  </span>
+                                )}
+                              </div>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="h-6 w-6 text-muted-foreground hover:text-destructive shrink-0"
+                                onClick={() => removePendingFile(id)}
+                                disabled={isPending || isUploading}
+                              >
+                                <X className="h-3 w-3" />
+                                <span className="sr-only">Remove {file.name}</span>
+                              </Button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
             </CardContent>
           </Card>
 

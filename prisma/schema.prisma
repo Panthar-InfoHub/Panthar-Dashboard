@@ -107,6 +107,9 @@ model Employee {
   // ── Task checklist completions ──
   completedChecklistItems TaskChecklistItem[] @relation("ChecklistItemCompletedBy")
   
+  // ── Task attachments ──
+  uploadedAttachments TaskAttachment[]
+  
   exitDate DateTime? // Null means currently active
 
   createdAt DateTime @default(now())
@@ -213,6 +216,7 @@ model Task {
 
   comments Comment[]
   checklistItems TaskChecklistItem[]
+  attachments TaskAttachment[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -253,6 +257,21 @@ model TaskChecklistItem {
 
   @@index([taskId])
   @@index([taskId, order])
+}
+
+model TaskAttachment {
+  id           String   @id @default(cuid())
+  taskId       String
+  task         Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  fileName     String   // original name, for display and download
+  fileKey      String   @unique // object key in R2
+  contentType  String
+  size         Int      // bytes
+  uploadedById String
+  uploadedBy   Employee @relation(fields: [uploadedById], references: [id])
+  createdAt    DateTime @default(now())
+
+  @@index([taskId])
 }
 
 // ─────────────────────────────────────────────

@@ -35,5 +35,5 @@ export default async function NewTaskPage() {
     })
   ]);
 
-  return <NewTaskForm projects={projects} employees={employees} />;
+  return <NewTaskForm projects={projects} employees={employees} canManageAttachments={true} />;
 }

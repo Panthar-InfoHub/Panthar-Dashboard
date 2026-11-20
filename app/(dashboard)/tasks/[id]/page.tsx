@@ -6,11 +6,14 @@ import { db } from "@/lib/db";
 
 export default async function TaskDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const [employee, canUpdateGlobal, canDelete] = await Promise.all([
+  const [employee, canUpdateGlobal, canDelete, canCreateGlobal] = await Promise.all([
     getCurrentEmployee(),
     checkPermission("task:update"),
     checkPermission("task:delete"),
+    checkPermission("task:create"),
   ]);
+
+  const canManageAttachments = canCreateGlobal || canUpdateGlobal;
 
   const task = await getTaskById(id, employee, canUpdateGlobal);
 
@@ -32,6 +35,6 @@ export default async function TaskDetailPage({ params }: { params: Promise<{ id:
     take: 100,
   });
 
-  return <TaskDetailClient initialTask={task} projectTasks={projectTasks} canEditDetails={canEditDetails} canEditStatus={canEditStatus} canDelete={canDelete} currentEmployeeId={employee.id} />;
+  return <TaskDetailClient initialTask={task} projectTasks={projectTasks} canEditDetails={canEditDetails} canEditStatus={canEditStatus} canDelete={canDelete} canManageAttachments={canManageAttachments} currentEmployeeId={employee.id} />;
 }
 

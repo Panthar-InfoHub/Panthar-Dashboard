@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { requireAuth, getCurrentEmployee, checkPermission } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
 import type { ProjectStatus, TaskPriority } from "@/lib/generated/prisma";
+import { deleteObjects } from "@/lib/r2";
 
 // ─── Validation Helpers ───
 
@@ -219,9 +220,24 @@ export async function deleteProjectAction(projectId: string) {
   const existing = await db.project.findUnique({ where: { id: projectId } });
   if (!existing) throw new Error("Project not found");
 
+  // Collect all attachment keys across all tasks in this project before deletion
+  const attachments = await db.taskAttachment.findMany({
+    where: { task: { projectId } },
+    select: { fileKey: true }
+  });
+
   await db.project.delete({
     where: { id: projectId }
   });
+
+  // Clean up R2 objects without blocking completion if storage fails
+  if (attachments.length > 0) {
+    try {
+      await deleteObjects(attachments.map(a => a.fileKey));
+    } catch (err: unknown) {
+      console.warn(`[Project Deletion Cleanup] Failed to delete R2 objects for project ${projectId}:`, err instanceof Error ? err.message : err);
+    }
+  }
 
   revalidatePath("/projects");
   revalidatePath("/");

@@ -14,6 +14,7 @@ import { Clock, Calendar, ChevronRight, Plus, Link as LinkIcon, ShieldAlert, Use
 import { cn } from "@/lib/utils";
 import { updateTaskStatusAction, updateTaskPriorityAction, createSubtaskAction, setTaskBlockerAction, assignTaskAction, deleteTaskAction } from "@/lib/actions/task.actions";
 import { TaskChecklist, type TaskChecklistItemData } from "@/components/tasks/task-checklist";
+import { TaskAttachments, type TaskAttachmentItemData } from "@/components/tasks/task-attachments";
 import { toast } from "sonner";
 
 const statusColors: Record<string, string> = { BACKLOG: "bg-gray-500/10 text-gray-600 border-gray-500/20", TODO: "bg-slate-500/10 text-slate-600 border-slate-500/20", IN_PROGRESS: "bg-blue-500/10 text-blue-600 border-blue-500/20", REVIEW: "bg-purple-500/10 text-purple-600 border-purple-500/20", TESTING: "bg-amber-500/10 text-amber-600 border-amber-500/20", DONE: "bg-emerald-500/10 text-emerald-600 border-emerald-500/20" };
@@ -81,6 +82,7 @@ export interface TaskDetailItem {
   assignees: TaskDetailAssignee[];
   subtasks?: TaskDetailSubtaskItem[];
   checklistItems?: TaskChecklistItemData[];
+  attachments?: TaskAttachmentItemData[];
 }
 
 export function TaskDetailClient({ 
@@ -89,6 +91,7 @@ export function TaskDetailClient({
   canEditDetails = true, 
   canEditStatus = true, 
   canDelete = false, 
+  canManageAttachments = false,
   currentEmployeeId 
 }: { 
   initialTask: TaskDetailItem, 
@@ -96,6 +99,7 @@ export function TaskDetailClient({
   canEditDetails?: boolean, 
   canEditStatus?: boolean, 
   canDelete?: boolean, 
+  canManageAttachments?: boolean,
   currentEmployeeId?: string 
 }) {
   const router = useRouter();
@@ -316,6 +320,14 @@ export function TaskDetailClient({
               initialItems={task.checklistItems || []}
               canEdit={canEditStatus}
               currentEmployee={currentEmployeeId ? { id: currentEmployeeId, firstName: "You" } : null}
+            />
+
+            {/* Attachments */}
+            <TaskAttachments
+              taskId={task.id}
+              isSubtask={Boolean(task.parentId)}
+              attachments={task.attachments || []}
+              canManage={canManageAttachments}
             />
 
             {/* Blockers & Dependencies */}

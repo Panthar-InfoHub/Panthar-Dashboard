@@ -7,6 +7,13 @@ export interface ServerEnv {
   DIRECT_URL?: string;
   CLERK_SECRET_KEY: string;
   CLERK_WEBHOOK_SIGNING_SECRET?: string;
+  // Cloudflare R2 Storage (Ticket 2 — Task Attachments)
+  R2_ACCOUNT_ID?: string;
+  R2_ACCESS_KEY_ID?: string;
+  R2_SECRET_ACCESS_KEY?: string;
+  R2_BUCKET_NAME?: string;
+  R2_PUBLIC_BASE_URL?: string;
+  // Legacy aliases for backward compatibility
   CLOUDFLARE_R2_ACCOUNT_ID?: string;
   CLOUDFLARE_R2_ACCESS_KEY_ID?: string;
   CLOUDFLARE_R2_SECRET_ACCESS_KEY?: string;
@@ -75,12 +82,18 @@ export function getServerEnv(): ServerEnv {
     DIRECT_URL: process.env.DIRECT_URL,
     CLERK_SECRET_KEY: process.env.CLERK_SECRET_KEY!,
     CLERK_WEBHOOK_SIGNING_SECRET: webhookSecret,
-    // Optional R2 configuration (Ticket 2)
-    CLOUDFLARE_R2_ACCOUNT_ID: process.env.CLOUDFLARE_R2_ACCOUNT_ID,
-    CLOUDFLARE_R2_ACCESS_KEY_ID: process.env.CLOUDFLARE_R2_ACCESS_KEY_ID,
-    CLOUDFLARE_R2_SECRET_ACCESS_KEY: process.env.CLOUDFLARE_R2_SECRET_ACCESS_KEY,
-    CLOUDFLARE_R2_BUCKET_NAME: process.env.CLOUDFLARE_R2_BUCKET_NAME,
-    CLOUDFLARE_R2_PUBLIC_URL: process.env.CLOUDFLARE_R2_PUBLIC_URL,
+    // Cloudflare R2 Storage (Ticket 2 — Task Attachments)
+    R2_ACCOUNT_ID: process.env.R2_ACCOUNT_ID || process.env.CLOUDFLARE_R2_ACCOUNT_ID,
+    R2_ACCESS_KEY_ID: process.env.R2_ACCESS_KEY_ID || process.env.CLOUDFLARE_R2_ACCESS_KEY_ID,
+    R2_SECRET_ACCESS_KEY: process.env.R2_SECRET_ACCESS_KEY || process.env.CLOUDFLARE_R2_SECRET_ACCESS_KEY,
+    R2_BUCKET_NAME: process.env.R2_BUCKET_NAME || process.env.CLOUDFLARE_R2_BUCKET_NAME,
+    R2_PUBLIC_BASE_URL: process.env.R2_PUBLIC_BASE_URL || process.env.CLOUDFLARE_R2_PUBLIC_URL,
+    // Legacy aliases
+    CLOUDFLARE_R2_ACCOUNT_ID: process.env.R2_ACCOUNT_ID || process.env.CLOUDFLARE_R2_ACCOUNT_ID,
+    CLOUDFLARE_R2_ACCESS_KEY_ID: process.env.R2_ACCESS_KEY_ID || process.env.CLOUDFLARE_R2_ACCESS_KEY_ID,
+    CLOUDFLARE_R2_SECRET_ACCESS_KEY: process.env.R2_SECRET_ACCESS_KEY || process.env.CLOUDFLARE_R2_SECRET_ACCESS_KEY,
+    CLOUDFLARE_R2_BUCKET_NAME: process.env.R2_BUCKET_NAME || process.env.CLOUDFLARE_R2_BUCKET_NAME,
+    CLOUDFLARE_R2_PUBLIC_URL: process.env.R2_PUBLIC_BASE_URL || process.env.CLOUDFLARE_R2_PUBLIC_URL,
   };
 }
 

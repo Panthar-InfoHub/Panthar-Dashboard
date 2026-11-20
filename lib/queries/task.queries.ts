@@ -117,6 +117,14 @@ export async function assertCanViewTask(taskId: string, callerEmployee?: AuthEmp
           },
         },
       },
+      attachments: {
+        orderBy: { createdAt: "asc" },
+        include: {
+          uploadedBy: {
+            select: { id: true, firstName: true, lastName: true, avatarUrl: true },
+          },
+        },
+      },
     },
   });
 

@@ -5,6 +5,7 @@ import { requireAuth, getCurrentEmployee, checkPermission } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
 import { getKanbanTasks } from "@/lib/queries/task.queries";
 import type { TaskStatus, TaskPriority } from "@/lib/generated/prisma";
+import { deleteObjects } from "@/lib/r2";
 
 // ─── Validation Helpers ───
 
@@ -346,7 +347,22 @@ export async function deleteTaskAction(taskId: string) {
 
   if (!existingTask) throw new Error("Task not found");
 
+  // Collect any attachment object keys to clean up from R2
+  const attachments = await db.taskAttachment.findMany({
+    where: { taskId },
+    select: { fileKey: true }
+  });
+
   await db.task.delete({ where: { id: taskId } });
+
+  // Clean up R2 objects without blocking completion if storage fails
+  if (attachments.length > 0) {
+    try {
+      await deleteObjects(attachments.map(a => a.fileKey));
+    } catch (err: unknown) {
+      console.warn(`[Task Deletion Cleanup] Failed to delete R2 objects for task ${taskId}:`, err instanceof Error ? err.message : err);
+    }
+  }
 
   revalidatePath("/tasks");
   revalidatePath("/projects");

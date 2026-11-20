@@ -22,7 +22,11 @@ export default async function EditTaskPage({ params }: { params: Promise<{ id: s
   }
 
   // Permission check: Only users with global task:update or the creator can modify core details
-  const canEditGlobal = await checkPermission("task:update");
+  const [canEditGlobal, canCreateGlobal] = await Promise.all([
+    checkPermission("task:update"),
+    checkPermission("task:create"),
+  ]);
+  const canManageAttachments = canEditGlobal || canCreateGlobal;
   const isCreator = task.creatorId === employee.id;
   const isAssignee = task.assignees.some((a) => a.id === employee.id);
   const isProjectMember = task.project?.members.some((m) => m.employeeId === employee.id);
@@ -57,5 +61,5 @@ export default async function EditTaskPage({ params }: { params: Promise<{ id: s
     })
   ]);
 
-  return <NewTaskForm projects={projects} employees={employees} initialData={task} canAssign={canEditGlobal} />;
+  return <NewTaskForm projects={projects} employees={employees} initialData={task} canAssign={canEditGlobal} canManageAttachments={canManageAttachments} />;
 }
