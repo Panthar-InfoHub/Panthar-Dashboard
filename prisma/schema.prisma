@@ -1,0 +1,321 @@
+// ── Panthar Teams — Prisma Schema ──
+// Single-org team operations platform
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../lib/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─────────────────────────────────────────────
+// ENUMS
+// ─────────────────────────────────────────────
+
+// ─────────────────────────────────────────────
+// ENUMS
+// ─────────────────────────────────────────────
+
+enum EmployeeStatus {
+  ACTIVE
+  ON_LEAVE
+  INACTIVE
+}
+
+enum TaskStatus {
+  BACKLOG
+  TODO
+  IN_PROGRESS
+  REVIEW
+  TESTING
+  DONE
+}
+
+enum TaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum ProjectStatus {
+  PLANNING
+  ACTIVE
+  PAUSED
+  COMPLETED
+  ARCHIVED
+}
+
+
+
+
+// ─────────────────────────────────────────────
+// CORE MODELS
+// ─────────────────────────────────────────────
+
+model SystemRole {
+  name        String   @id // e.g. "ADMIN", "MANAGER", "EMPLOYEE", "INTERN"
+  permissions String[]
+  isSystem    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+/// Central entity. Every person in the org is an Employee.
+/// Clerk provides identity (clerkId), our DB provides role/authorization.
+model Employee {
+  id          String         @id @default(cuid())
+  clerkId     String         @unique // Clerk user_xxx ID — set via webhook
+  email       String         @unique
+  firstName   String
+  lastName    String
+  avatarUrl   String?
+  role        String         @default("EMPLOYEE")
+  status      EmployeeStatus @default(ACTIVE)
+  designation String?        // e.g. "Senior Frontend Engineer"
+  phone       String?
+  joinDate    DateTime       @default(now())
+  
+  // ── Employee Codes ──
+  pantharCode String?        @unique
+  kavachXCode String?        @unique
+
+  // ── Team relation ──
+  teamId      String?
+  team        Team?          @relation("TeamMembers", fields: [teamId], references: [id])
+  leadOfTeams Team[]         @relation("TeamLead")
+
+  // ── Task relations ──
+  assignedTasks Task[] @relation("TaskAssignees")
+  createdTasks  Task[] @relation("TaskCreator")
+
+  // ── Project relations ──
+  projectLead   Project[]       @relation("ProjectLead")
+  projectMember ProjectMember[]
+
+  // ── Notification relations ──
+  notifications Notification[]
+
+  // ── Employment Records ──
+  employmentRecords EmploymentRecord[]
+
+  // ── Per-user permission overrides ──
+  employeePermissions EmployeePermission[]
+
+  // ── Task checklist completions ──
+  completedChecklistItems TaskChecklistItem[] @relation("ChecklistItemCompletedBy")
+  
+  exitDate DateTime? // Null means currently active
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([clerkId])
+  @@index([teamId])
+  @@index([role])
+  @@index([status])
+}
+
+model Team {
+  id          String  @id @default(cuid())
+  name        String  @unique
+  description String?
+  color       String? // hex for UI badges
+  icon        String?
+
+  leadId  String
+  lead    Employee @relation("TeamLead", fields: [leadId], references: [id])
+  members Employee[] @relation("TeamMembers")
+
+  projects Project[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([leadId])
+}
+
+model Project {
+  id          String        @id @default(cuid())
+  name        String
+  description String?
+  status      ProjectStatus @default(PLANNING)
+  priority    TaskPriority  @default(MEDIUM)
+  progress    Int           @default(0) // 0–100
+
+  startDate DateTime?
+  endDate   DateTime?
+
+  teamId String
+  team   Team     @relation(fields: [teamId], references: [id])
+  leadId String
+  lead   Employee @relation("ProjectLead", fields: [leadId], references: [id])
+
+  tasks   Task[]
+  members ProjectMember[]
+  delegatedPerms EmployeePermission[] // Permissions specifically scoped to this project
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([teamId])
+  @@index([leadId])
+  @@index([status])
+  @@index([updatedAt])
+}
+
+model ProjectMember {
+  id         String   @id @default(cuid())
+  projectId  String
+  project    Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  employeeId String
+  employee   Employee @relation(fields: [employeeId], references: [id])
+  joinedAt   DateTime @default(now())
+
+  @@unique([projectId, employeeId])
+}
+
+model Task {
+  id             String       @id @default(cuid())
+  title          String
+  description    String?
+  status         TaskStatus   @default(BACKLOG)
+  priority       TaskPriority @default(MEDIUM)
+  order          Float        @default(0)
+  storyPoints    Int?
+  labels         String[]     // e.g. ["backend", "security"]
+
+  startDate      DateTime?
+  dueDate        DateTime?
+  completedAt    DateTime?
+  completionNote String?      // required to move to DONE
+  prLink         String?      // required to move to DONE
+  blockers       String?
+
+  projectId  String
+  project    Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  assignees  Employee[] @relation("TaskAssignees")
+  
+  // Subtask hierarchy
+  parentId   String?
+  parent     Task?     @relation("TaskSubtask", fields: [parentId], references: [id], onDelete: Cascade)
+  subtasks   Task[]    @relation("TaskSubtask")
+
+  // Blocker chain
+  blockedById String?
+  blockedBy   Task?     @relation("TaskBlocker", fields: [blockedById], references: [id])
+  blocking    Task[]    @relation("TaskBlocker")
+
+  creatorId  String
+  creator    Employee  @relation("TaskCreator", fields: [creatorId], references: [id])
+
+  comments Comment[]
+  checklistItems TaskChecklistItem[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([projectId])
+  @@index([status, projectId])  // project board filtering
+  @@index([status, order])
+  @@index([parentId])
+  @@index([dueDate])
+  @@index([updatedAt])
+  @@index([status])
+  @@index([status, dueDate])
+}
+
+model Comment {
+  id       String @id @default(cuid())
+  content  String
+  taskId   String
+  task     Task   @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  authorId String
+
+  createdAt DateTime @default(now())
+}
+
+model TaskChecklistItem {
+  id            String    @id @default(cuid())
+  taskId        String
+  task          Task      @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  title         String
+  isCompleted   Boolean   @default(false)
+  order         Float     @default(0)
+  completedAt   DateTime?
+  completedById String?
+  completedBy   Employee? @relation("ChecklistItemCompletedBy", fields: [completedById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([taskId])
+  @@index([taskId, order])
+}
+
+// ─────────────────────────────────────────────
+// SYSTEM MODELS
+// ─────────────────────────────────────────────
+
+model Sequence {
+  name  String @id // e.g. "SEQ_PANTHAR", "SEQ_KAVACHX"
+  value Int    @default(0)
+}
+
+model Notification {
+  id          String   @id @default(cuid())
+  recipientId String
+  type        String   // "TEAM_ADDED", "PROJECT_ADDED", "TASK_ASSIGNED"
+  title       String
+  message     String
+  actionUrl   String?
+  isRead      Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  
+  recipient   Employee @relation(fields: [recipientId], references: [id], onDelete: Cascade)
+  
+  @@index([recipientId])
+  @@index([isRead])
+}
+
+model EmploymentRecord {
+  id          String    @id @default(cuid())
+  employeeId  String
+  employee    Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  
+  designation String?   // e.g., "Frontend Intern", "Senior Developer"
+  
+  startDate   DateTime  @default(now())
+  endDate     DateTime? // Null means currently active role
+  
+  reason      String?   
+  
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([employeeId])
+}
+
+// ── Per-User Permission Delegation ──
+// Allows admins/managers to grant specific permissions to individual users
+// without changing their role. Checked by hasPermission() after role perms.
+model EmployeePermission {
+  id          String    @id @default(cuid())
+  employeeId  String
+  employee    Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  permission  String    // e.g., "task:create", "task:update"
+  
+  // Optional scope: If set, this permission ONLY applies to this specific project
+  projectId   String?
+  project     Project?  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  grantedBy   String    // employee ID of the admin/manager who granted this
+  grantedAt   DateTime  @default(now())
+  expiresAt   DateTime? // null = permanent, otherwise auto-expires
+
+  @@unique([employeeId, permission, projectId]) // Ensures no duplicate permission for the same scope
+  @@index([employeeId])
+  @@index([projectId])
+}

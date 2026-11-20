@@ -1,0 +1,123 @@
+"use server";
+
+import { db } from "@/lib/db";
+import { requireAuth, getCurrentEmployee, checkPermission } from "@/lib/auth";
+import { revalidatePath } from "next/cache";
+
+export async function createTeamAction(data: {
+  name: string;
+  description?: string;
+  color?: string;
+  leadId: string;
+}) {
+  await requireAuth("team:create"); // Require proper permission
+
+  const team = await db.team.create({
+    data: {
+      name: data.name,
+      description: data.description,
+      color: data.color,
+      leadId: data.leadId,
+      members: {
+        connect: [{ id: data.leadId }] // Lead is automatically a member
+      }
+    }
+  });
+
+  revalidatePath("/teams");
+  return team;
+}
+export async function updateTeamAction(teamId: string, data: {
+  name: string;
+  description?: string;
+  color?: string;
+  leadId: string;
+}) {
+  const employee = await getCurrentEmployee();
+  const hasGlobalPerm = await checkPermission("team:update");
+
+  const existing = await db.team.findUnique({ where: { id: teamId } });
+  if (!existing) throw new Error("Team not found");
+  if (!hasGlobalPerm && existing.leadId !== employee.id) {
+    throw new Error("You do not have permission for this action.");
+  }
+
+  const team = await db.team.update({
+    where: { id: teamId },
+    data: {
+      name: data.name,
+      description: data.description,
+      color: data.color,
+      leadId: data.leadId,
+    }
+  });
+
+  revalidatePath("/teams");
+  revalidatePath(`/teams/${teamId}`);
+  return team;
+}
+
+export async function manageTeamMembersAction(teamId: string, memberIds: string[]) {
+  const employee = await getCurrentEmployee();
+  const hasGlobalPerm = await checkPermission("team:update");
+
+  const existing = await db.team.findUnique({ 
+    where: { id: teamId },
+    include: { members: true }
+  });
+  if (!existing) throw new Error("Team not found");
+  if (!hasGlobalPerm && existing.leadId !== employee.id) {
+    throw new Error("You do not have permission for this action.");
+  }
+
+  // Since prisma `set` replaces all relations, this is a clean sync
+  const team = await db.team.update({
+    where: { id: teamId },
+    data: {
+      members: {
+        set: memberIds.map(id => ({ id }))
+      }
+    }
+  });
+
+  // Calculate new members and notify them
+  const existingMemberIds = existing.members.map(m => m.id);
+  const newlyAddedIds = memberIds.filter(id => !existingMemberIds.includes(id));
+
+  if (newlyAddedIds.length > 0) {
+    await db.notification.createMany({
+      data: newlyAddedIds.map(id => ({
+        recipientId: id,
+        type: "TEAM_ADDED",
+        title: "Added to Team",
+        message: `You have been added to the team: ${team.name}`,
+        actionUrl: `/teams/${team.id}`
+      }))
+    });
+  }
+
+  revalidatePath("/teams");
+  revalidatePath(`/teams/${teamId}`);
+  return team;
+}
+
+export async function deleteTeamAction(teamId: string) {
+  await requireAuth("team:delete");
+
+  const existing = await db.team.findUnique({ where: { id: teamId } });
+  if (!existing) throw new Error("Team not found");
+
+  try {
+    await db.team.delete({
+      where: { id: teamId }
+    });
+  } catch (error: unknown) {
+    if ((error as { code?: string }).code === 'P2003') {
+      throw new Error("Cannot delete this team because it still has active projects. Please delete or reassign all projects first.");
+    }
+    throw error;
+  }
+
+  revalidatePath("/teams");
+  return true;
+}

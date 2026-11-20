@@ -1,0 +1,188 @@
+import { db } from "@/lib/db";
+import { getCurrentEmployee, checkPermission, type AuthEmployee } from "@/lib/auth";
+import type { Prisma } from "@/lib/generated/prisma";
+
+export async function getKanbanTasks(
+  filters?: { team?: string; project?: string; assignee?: string; search?: string },
+  skip = 0,
+  take = 100
+) {
+  const employee = await getCurrentEmployee();
+  const canViewAll = await checkPermission("task:update");
+
+  // For the Kanban board, fetch tasks the user has access to. Admins/updaters see all tasks.
+  // Creators, project members, and assignees see their respective tasks.
+  const accessClause = canViewAll
+    ? {}
+    : {
+        OR: [
+          { creatorId: employee.id },
+          { project: { members: { some: { employeeId: employee.id } } } },
+          { assignees: { some: { id: employee.id } } },
+        ],
+      };
+
+  const AND: Prisma.TaskWhereInput[] = [];
+  if (Object.keys(accessClause).length > 0) AND.push(accessClause);
+
+  if (filters?.team && filters.team !== "ALL") {
+    AND.push({ project: { teamId: filters.team } });
+  }
+  if (filters?.project && filters.project !== "ALL") {
+    AND.push({ projectId: filters.project });
+  }
+  if (filters?.assignee && filters.assignee !== "ALL") {
+    if (filters.assignee === "UNASSIGNED") {
+      AND.push({ assignees: { none: {} } });
+    } else {
+      AND.push({ assignees: { some: { id: filters.assignee } } });
+    }
+  }
+  if (filters?.search) {
+    AND.push({ title: { contains: filters.search, mode: "insensitive" } });
+  }
+
+  const whereClause = AND.length > 0 ? { AND } : {};
+
+  const tasks = await db.task.findMany({
+    where: whereClause,
+    skip,
+    take,
+    include: {
+      assignees: {
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          avatarUrl: true,
+        },
+      },
+      project: {
+        select: {
+          id: true,
+          name: true,
+          team: { select: { id: true, name: true } },
+        },
+      },
+    },
+    orderBy: [{ order: "asc" }, { updatedAt: "desc" }],
+  });
+
+  return tasks;
+}
+
+/**
+ * Shared authorization assertion for task visibility.
+ * Resolves the authenticated user server-side and checks global or scoped permissions.
+ * Throws FORBIDDEN if unauthorized.
+ */
+export async function assertCanViewTask(taskId: string, callerEmployee?: AuthEmployee) {
+  const employee = callerEmployee ?? (await getCurrentEmployee());
+  const canViewAll = await checkPermission("task:update");
+
+  const task = await db.task.findUnique({
+    where: { id: taskId },
+    include: {
+      project: {
+        include: {
+          team: true,
+          members: {
+            include: {
+              employee: {
+                select: { id: true, firstName: true, lastName: true, avatarUrl: true },
+              },
+            },
+          },
+        },
+      },
+      assignees: {
+        select: { id: true, firstName: true, lastName: true, avatarUrl: true },
+      },
+      creator: {
+        select: { id: true, firstName: true, lastName: true, avatarUrl: true },
+      },
+      subtasks: {
+        include: {
+          assignees: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
+        },
+      },
+      blockedBy: {
+        select: { id: true, title: true, status: true },
+      },
+      checklistItems: {
+        orderBy: [{ order: "asc" }, { createdAt: "asc" }],
+        include: {
+          completedBy: {
+            select: { id: true, firstName: true, lastName: true, avatarUrl: true },
+          },
+        },
+      },
+    },
+  });
+
+  if (!task) return null;
+
+  if (!canViewAll) {
+    const isAssignee = task.assignees?.some((a) => a.id === employee.id);
+    const isProjectMember = task.project?.members?.some((m) => m.employeeId === employee.id);
+    const isCreator = task.creatorId === employee.id;
+
+    if (!isAssignee && !isProjectMember && !isCreator) {
+      throw new Error("FORBIDDEN: Requires higher permission level");
+    }
+  }
+
+  return task;
+}
+
+export async function getTaskById(taskId: string, callerEmployee?: AuthEmployee, canUpdate?: boolean) {
+  const employee = callerEmployee ?? (await getCurrentEmployee());
+  const canViewAll = canUpdate !== undefined ? canUpdate : await checkPermission("task:update");
+
+  const task = await assertCanViewTask(taskId, employee);
+  if (!task) return null;
+
+  // If caller already has canUpdate, access was validated in assertCanViewTask
+  if (!canViewAll) {
+    const isAssignee = task.assignees?.some((a) => a.id === employee.id);
+    const isProjectMember = task.project?.members?.some((m) => m.employeeId === employee.id);
+    const isCreator = task.creatorId === employee.id;
+
+    if (!isAssignee && !isProjectMember && !isCreator) {
+      throw new Error("FORBIDDEN: Requires higher permission level");
+    }
+  }
+
+  return { ...task, activity: [] };
+}
+
+export async function getTaskFilterDropdowns() {
+  const employee = await getCurrentEmployee();
+  const canViewAll = await checkPermission("project:update");
+
+  const [projects, teams, employees] = await Promise.all([
+    db.project.findMany({
+      where: canViewAll
+        ? {}
+        : {
+            OR: [
+              { members: { some: { employeeId: employee.id } } },
+              { leadId: employee.id },
+            ],
+          },
+      select: { id: true, name: true, teamId: true },
+      orderBy: { name: "asc" },
+    }),
+    db.team.findMany({
+      select: { id: true, name: true },
+      orderBy: { name: "asc" },
+    }),
+    db.employee.findMany({
+      where: { status: "ACTIVE" },
+      select: { id: true, firstName: true, lastName: true, avatarUrl: true },
+      orderBy: { firstName: "asc" },
+    }),
+  ]);
+
+  return { projects, teams, employees };
+}
