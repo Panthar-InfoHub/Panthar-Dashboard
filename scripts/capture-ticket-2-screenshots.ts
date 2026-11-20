@@ -206,3 +206,4 @@ console.log("Mobile screenshot captured at:", mobilePath);
 fs.copyFileSync(desktopPath, path.join(artifactDir, "task-detail-attachments-desktop.png"));
 fs.copyFileSync(mobilePath, path.join(artifactDir, "task-detail-attachments-mobile.png"));
 console.log("Copied screenshots to artifact directory:", artifactDir);
+

@@ -64,11 +64,18 @@ export function getR2BucketName(): string {
 /**
  * Generates a presigned PUT URL for browser-to-R2 direct upload.
  * Expiration: strictly 5 minutes (300 seconds).
+ *
+ * NOTE: ContentLength is intentionally omitted from PutObjectCommand here so that
+ * `content-length` is not added to `X-Amz-SignedHeaders`. In browsers, Content-Length
+ * is a forbidden header name that cannot be set manually via XHR/fetch; signing it
+ * causes signature mismatches. Size enforcement is handled via client validation,
+ * server action pre-checks, and authoritative R2 HeadObject verification upon confirmation.
  */
 export async function getUploadUrl(
   key: string,
   contentType: string,
-  contentLength?: number
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  _contentLength?: number
 ): Promise<string> {
   const client = getR2Client();
   const bucket = getR2BucketName();
@@ -77,10 +84,12 @@ export async function getUploadUrl(
     Bucket: bucket,
     Key: key,
     ContentType: contentType,
-    ...(contentLength !== undefined ? { ContentLength: contentLength } : {}),
   });
 
-  return getSignedUrl(client, command, { expiresIn: 300 });
+  return getSignedUrl(client, command, {
+    expiresIn: 300,
+    signableHeaders: new Set(["host", "content-type"]),
+  });
 }
 
 /**
