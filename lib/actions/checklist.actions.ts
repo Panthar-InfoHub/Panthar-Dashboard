@@ -3,6 +3,14 @@
 import { db } from "@/lib/db";
 import { getCurrentEmployee, checkPermission, type AuthEmployee } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
+
+function safeRevalidatePath(path: string, type?: "page" | "layout") {
+  try {
+    revalidatePath(path, type);
+  } catch {
+    // In tests or non-request contexts, static generation store is not present
+  }
+}
 import {
   validateChecklistTitle,
   validateTaskId,
@@ -125,9 +133,9 @@ export async function createChecklistItemAction(data: { taskId: string; title: s
     },
   });
 
-  revalidatePath(`/tasks/${taskId}`);
-  revalidatePath("/tasks");
-  revalidatePath("/");
+  safeRevalidatePath(`/tasks/${taskId}`);
+  safeRevalidatePath("/tasks");
+  safeRevalidatePath("/");
 
   return { success: true, item: newItem };
 }
@@ -157,9 +165,9 @@ export async function updateChecklistItemAction(data: { itemId: string; title: s
     },
   });
 
-  revalidatePath(`/tasks/${existingItem.taskId}`);
-  revalidatePath("/tasks");
-  revalidatePath("/");
+  safeRevalidatePath(`/tasks/${existingItem.taskId}`);
+  safeRevalidatePath("/tasks");
+  safeRevalidatePath("/");
 
   return { success: true, item: updatedItem };
 }
@@ -195,9 +203,9 @@ export async function toggleChecklistItemAction(data: { itemId: string; isComple
     },
   });
 
-  revalidatePath(`/tasks/${existingItem.taskId}`);
-  revalidatePath("/tasks");
-  revalidatePath("/");
+  safeRevalidatePath(`/tasks/${existingItem.taskId}`);
+  safeRevalidatePath("/tasks");
+  safeRevalidatePath("/");
 
   return { success: true, item: updatedItem };
 }
@@ -215,9 +223,9 @@ export async function deleteChecklistItemAction(data: { itemId: string }) {
     where: { id: itemId },
   });
 
-  revalidatePath(`/tasks/${existingItem.taskId}`);
-  revalidatePath("/tasks");
-  revalidatePath("/");
+  safeRevalidatePath(`/tasks/${existingItem.taskId}`);
+  safeRevalidatePath("/tasks");
+  safeRevalidatePath("/");
 
   return { success: true, itemId };
 }
@@ -262,7 +270,7 @@ export async function reorderChecklistItemsAction(data: { taskId: string; ordere
     )
   );
 
-  revalidatePath(`/tasks/${taskId}`);
+  safeRevalidatePath(`/tasks/${taskId}`);
   return { success: true };
 }
 
