@@ -2,6 +2,7 @@ import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Radar, AlertCircle, CheckCircle2 } from "lucide-react";
 import { TASK_PRIORITY_COLORS, PROJECT_STATUS_COLORS, formatEnumLabel } from "@/lib/dashboard-colors";
+import { TaskColumnBadge } from "@/components/tasks/task-column-badge";
 import { format, isToday, isTomorrow, isPast, endOfDay } from "date-fns";
 import Link from "next/link";
 
@@ -9,6 +10,14 @@ interface RadarTask {
   id: string;
   title: string;
   priority: string;
+  status?: string;
+  columnId?: string | null;
+  column?: {
+    id?: string;
+    name: string;
+    color: string;
+    systemKey?: string | null;
+  } | null;
   dueDate: Date | string | null;
   isOverdue: boolean;
   project: { id: string; name: string };
@@ -136,7 +145,10 @@ export function PriorityPanels({
                     ))}
                   </div>
                 )}
-                <DueBadge dueDate={task.dueDate} isOverdue={task.isOverdue} />
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <TaskColumnBadge column={task.column} status={task.status} size="sm" />
+                  <DueBadge dueDate={task.dueDate} isOverdue={task.isOverdue} />
+                </div>
               </Link>
             );
           })}

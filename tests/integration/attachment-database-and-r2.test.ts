@@ -95,7 +95,7 @@ describe("Attachment Database & Cloudflare R2 Integration Tests", () => {
         projectId: testProjectId,
         creatorId: testLeadId,
         priority: "HIGH",
-        status: "BACKLOG",
+        columnId: "col_backlog",
         order: 1000,
       },
     });
@@ -109,7 +109,7 @@ describe("Attachment Database & Cloudflare R2 Integration Tests", () => {
         creatorId: testLeadId,
         parentId: testTaskId,
         priority: "LOW",
-        status: "TODO",
+        columnId: "col_todo",
         order: 2000,
       },
     });
@@ -332,7 +332,7 @@ describe("Attachment Database & Cloudflare R2 Integration Tests", () => {
         projectId: testProjectId,
         creatorId: testLeadId,
         priority: "LOW",
-        status: "BACKLOG",
+        columnId: "col_backlog",
         order: 5000,
       },
     });

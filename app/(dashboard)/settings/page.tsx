@@ -3,9 +3,14 @@ import { getCurrentEmployee } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { SettingsClient } from "@/components/settings/settings-client";
 import { getSystemRolesAction } from "@/lib/actions/role.actions";
+import { getBoardColumnsAction } from "@/lib/actions/board-column.actions";
 import { Skeleton } from "@/components/ui/skeleton";
 
-export default function SettingsPage() {
+interface SettingsPageProps {
+  searchParams?: Promise<{ [key: string]: string | undefined }>;
+}
+
+export default function SettingsPage({ searchParams }: SettingsPageProps) {
   return (
     <div className="space-y-6 p-6 h-full overflow-y-auto">
       <div>
@@ -32,20 +37,33 @@ export default function SettingsPage() {
           </div>
         </div>
       }>
-        <SettingsDataAsync />
+        <SettingsDataAsync searchParams={searchParams} />
       </Suspense>
     </div>
   );
 }
 
-async function SettingsDataAsync() {
+async function SettingsDataAsync({ searchParams }: SettingsPageProps) {
   const employee = await getCurrentEmployee();
 
   if (employee.role !== "ADMIN") {
     redirect("/");
   }
 
-  const roles = await getSystemRolesAction();
-  return <SettingsClient initialRoles={roles} />;
+  const [roles, columns, resolvedSearchParams] = await Promise.all([
+    getSystemRolesAction(),
+    getBoardColumnsAction(),
+    searchParams ? searchParams : Promise.resolve<Record<string, string | undefined>>({}),
+  ]);
+
+  const defaultTab = resolvedSearchParams?.tab === "columns" ? "columns" : "roles";
+
+  return (
+    <SettingsClient
+      initialRoles={roles}
+      initialColumns={columns}
+      defaultTab={defaultTab}
+    />
+  );
 }
 

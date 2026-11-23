@@ -15,9 +15,14 @@ import { cn } from "@/lib/utils";
 import { updateTaskStatusAction, updateTaskPriorityAction, createSubtaskAction, setTaskBlockerAction, assignTaskAction, deleteTaskAction } from "@/lib/actions/task.actions";
 import { TaskChecklist, type TaskChecklistItemData } from "@/components/tasks/task-checklist";
 import { TaskAttachments, type TaskAttachmentItemData } from "@/components/tasks/task-attachments";
+import { TaskColumnBadge } from "@/components/tasks/task-column-badge";
+import {
+  KanbanColumn,
+  BASELINE_COLUMNS,
+  LEGACY_STATUS_TO_COLUMN_ID,
+} from "@/lib/validations/board-column";
 import { toast } from "sonner";
 
-const statusColors: Record<string, string> = { BACKLOG: "bg-gray-500/10 text-gray-600 border-gray-500/20", TODO: "bg-slate-500/10 text-slate-600 border-slate-500/20", IN_PROGRESS: "bg-blue-500/10 text-blue-600 border-blue-500/20", REVIEW: "bg-purple-500/10 text-purple-600 border-purple-500/20", TESTING: "bg-amber-500/10 text-amber-600 border-amber-500/20", DONE: "bg-emerald-500/10 text-emerald-600 border-emerald-500/20" };
 const priorityColors: Record<string, string> = { CRITICAL: "bg-red-500/10 text-red-600 border-red-500/20", HIGH: "bg-orange-500/10 text-orange-600 border-orange-500/20", MEDIUM: "bg-blue-500/10 text-blue-600 border-blue-500/20", LOW: "bg-gray-500/10 text-gray-600 border-gray-500/20" };
 
 export interface TaskDetailAssignee {
@@ -48,7 +53,15 @@ export interface TaskDetailProject {
 export interface TaskDetailSubtaskItem {
   id: string;
   title: string;
-  status: string;
+  status?: string;
+  columnId?: string | null;
+  column?: {
+    id: string;
+    name: string;
+    color: string;
+    position?: number;
+    systemKey?: string | null;
+  } | null;
   priority?: string;
   dueDate?: Date | string | null;
   parentId?: string | null;
@@ -60,7 +73,15 @@ export interface TaskDetailItem {
   id: string;
   title: string;
   description?: string | null;
-  status: string;
+  status?: string;
+  columnId?: string | null;
+  column?: {
+    id: string;
+    name: string;
+    color: string;
+    position?: number;
+    systemKey?: string | null;
+  } | null;
   priority: string;
   startDate?: Date | string | null;
   dueDate?: Date | string | null;
@@ -70,12 +91,28 @@ export interface TaskDetailItem {
   blocker?: {
     id: string;
     title: string;
-    status: string;
+    status?: string;
+    columnId?: string | null;
+    column?: {
+      id: string;
+      name: string;
+      color: string;
+      position?: number;
+      systemKey?: string | null;
+    } | null;
   } | null;
   blockedBy?: {
     id: string;
     title: string;
-    status: string;
+    status?: string;
+    columnId?: string | null;
+    column?: {
+      id: string;
+      name: string;
+      color: string;
+      position?: number;
+      systemKey?: string | null;
+    } | null;
   } | null;
   parentId?: string | null;
   project: TaskDetailProject;
@@ -88,6 +125,7 @@ export interface TaskDetailItem {
 export function TaskDetailClient({ 
   initialTask, 
   projectTasks = [], 
+  columns = [],
   canEditDetails = true, 
   canEditStatus = true, 
   canDelete = false, 
@@ -96,6 +134,7 @@ export function TaskDetailClient({
 }: { 
   initialTask: TaskDetailItem, 
   projectTasks?: TaskDetailSubtaskItem[], 
+  columns?: KanbanColumn[],
   canEditDetails?: boolean, 
   canEditStatus?: boolean, 
   canDelete?: boolean, 
@@ -106,6 +145,8 @@ export function TaskDetailClient({
   const [task, setTask] = useState<TaskDetailItem>(initialTask);
   const [projectTasksList, setProjectTasksList] = useState<TaskDetailSubtaskItem[]>(projectTasks);
   
+  const activeColumns = columns && columns.length > 0 ? columns : BASELINE_COLUMNS;
+
   // Storing information from previous renders to avoid useEffect setState
   const [prevInitialTask, setPrevInitialTask] = useState(initialTask);
   if (prevInitialTask !== initialTask) {
@@ -145,16 +186,43 @@ export function TaskDetailClient({
     setExpandedSubtasks(prev => ({ ...prev, [id]: !prev[id] }));
   };
 
-  const handleStatusChange = (newStatus: string) => {
-    const oldStatus = task.status;
-    setTask((prev) => ({ ...prev, status: newStatus }));
+  // Authoritative current column resolution
+  const currentColumn =
+    task.column ??
+    activeColumns.find((c) => c.id === task.columnId) ??
+    activeColumns[0];
+
+  const isTaskDone = currentColumn?.systemKey === "DONE";
+  const doneColumn = activeColumns.find((c) => c.systemKey === "DONE") ?? activeColumns[activeColumns.length - 1];
+
+  const handleColumnChange = (newColumnId: string) => {
+    const previousColumn = currentColumn;
+    const targetCol = activeColumns.find((c) => c.id === newColumnId);
+    if (!targetCol) return;
+
+    setTask((prev) => ({
+      ...prev,
+      columnId: targetCol.id,
+      column: targetCol,
+    }));
+
     startTransition(() => {
-      updateTaskStatusAction(task.id, newStatus).then((res) => {
-        if(res.success) toast.success(`Status updated to ${newStatus}`);
-      }).catch(() => {
-        setTask((prev) => ({ ...prev, status: oldStatus }));
-        toast.error("Failed to update status");
-      });
+      updateTaskStatusAction(task.id, targetCol.id)
+        .then((res) => {
+          if (res?.success) {
+            toast.success(`Moved to ${targetCol.name}`);
+            router.refresh();
+          }
+        })
+        .catch((err: unknown) => {
+          setTask((prev) => ({
+            ...prev,
+            columnId: previousColumn?.id ?? null,
+            column: previousColumn,
+          }));
+          const msg = err instanceof Error ? err.message : "Failed to update column";
+          toast.error(msg);
+        });
     });
   };
 
@@ -239,8 +307,13 @@ export function TaskDetailClient({
                 Delete
               </Button>
             )}
-          {canEditStatus && task.status !== "DONE" && (
-            <Button size="sm" className="h-8 shadow-none text-xs flex-1 sm:flex-initial" onClick={() => handleStatusChange("DONE")}>
+          {canEditStatus && !isTaskDone && (
+            <Button
+              size="sm"
+              className="h-8 shadow-none text-xs flex-1 sm:flex-initial gap-1.5"
+              onClick={() => handleColumnChange(doneColumn.id)}
+              disabled={isPending}
+            >
               Mark as Done
             </Button>
           )}
@@ -259,19 +332,33 @@ export function TaskDetailClient({
                 <DropdownMenu>
                   <DropdownMenuTrigger className="focus:outline-none" disabled={!canEditStatus}>
                     <div className={cn("flex items-center gap-2 text-sm text-muted-foreground mr-4", !canEditStatus && "opacity-70 cursor-not-allowed")}>
-                      Status:
-                      <Badge variant="outline" className={cn("text-[11px] px-2 py-0.5 rounded-full font-medium shadow-none cursor-pointer hover:opacity-80 transition-opacity flex items-center gap-1", statusColors[task.status])}>
-                        {task.status.replace("_", " ")} {canEditStatus && <ChevronDown className="h-3 w-3" />}
-                      </Badge>
+                      Column:
+                      <TaskColumnBadge
+                        column={currentColumn}
+                        className={cn("cursor-pointer hover:opacity-80 transition-opacity flex items-center gap-1.5", !canEditStatus && "cursor-not-allowed")}
+                      >
+                        {currentColumn.name} {canEditStatus && <ChevronDown className="h-3 w-3" />}
+                      </TaskColumnBadge>
                     </div>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="start">
-                    <DropdownMenuLabel className="text-xs">Change Status</DropdownMenuLabel>
+                    <DropdownMenuLabel className="text-xs">Change Column</DropdownMenuLabel>
                     <DropdownMenuSeparator />
-                    {Object.keys(statusColors).map(s => (
-                      <DropdownMenuItem key={s} onClick={() => handleStatusChange(s)} className="text-xs cursor-pointer">
-                        <div className={cn("w-2 h-2 rounded-full mr-2", statusColors[s].split(" ")[0])} />
-                        {s.replace("_", " ")}
+                    {activeColumns.map((col) => (
+                      <DropdownMenuItem
+                        key={col.id}
+                        onClick={() => handleColumnChange(col.id)}
+                        className="text-xs cursor-pointer flex items-center justify-between gap-3"
+                      >
+                        <div className="flex items-center gap-2">
+                          <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: col.color }} />
+                          <span>{col.name}</span>
+                        </div>
+                        {col.systemKey && (
+                          <Badge variant="secondary" className="text-[9px] px-1 py-0 h-4 font-normal">
+                            {col.systemKey === "BACKLOG" ? "First" : "Done"}
+                          </Badge>
+                        )}
                       </DropdownMenuItem>
                     ))}
                   </DropdownMenuContent>
@@ -356,7 +443,7 @@ export function TaskDetailClient({
                     {projectTasks?.map(t => (
                       <DropdownMenuItem key={t.id} onClick={() => handleBlockerChange(t.id)} className="text-xs cursor-pointer flex flex-col items-start gap-1">
                         <span className="font-medium truncate w-full">{t.title}</span>
-                        <span className="text-[9px] text-muted-foreground">{t.status}</span>
+                        <span className="text-[9px] text-muted-foreground">{t.column?.name || t.status || "Task"}</span>
                       </DropdownMenuItem>
                     ))}
                     {projectTasks?.length === 0 && <DropdownMenuItem disabled className="text-xs">No other tasks in project</DropdownMenuItem>}
@@ -373,9 +460,10 @@ export function TaskDetailClient({
                         <span className="inline-block w-1 h-1 rounded-full bg-muted-foreground"></span> Blocker Task
                       </span>
                     </div>
-                    <Badge variant="outline" className={cn("text-[9px] shadow-none whitespace-nowrap", statusColors[task.blockedBy.status])}>
-                      {task.blockedBy.status}
-                    </Badge>
+                    <TaskColumnBadge
+                      column={task.blockedBy.column}
+                      size="sm"
+                    />
                   </div>
                 </Link>
               )}
@@ -414,35 +502,51 @@ export function TaskDetailClient({
                               </Link>
                             </div>
                             <div className="flex items-center gap-3 pl-9 sm:pl-0 shrink-0 sm:w-[220px] justify-end">
-                              <div className="w-[95px] flex justify-end">
+                              <div className="w-[110px] flex justify-end">
                                 <DropdownMenu>
                                 <DropdownMenuTrigger className="focus:outline-none shrink-0" disabled={!canEditStatus}>
-                                  <Badge variant="outline" className={cn("text-[9px] px-1 py-0 shadow-none cursor-pointer hover:opacity-80 transition-opacity flex items-center gap-0.5", statusColors[subtask.status], !canEditStatus && "opacity-70 cursor-not-allowed")}>
-                                    {subtask.status.replace("_", " ")} {canEditStatus && <ChevronDown className="h-2.5 w-2.5" />}
-                                  </Badge>
+                                  {(() => {
+                                    const subCol =
+                                      subtask.column ??
+                                      activeColumns.find((c) => c.id === subtask.columnId) ??
+                                      activeColumns[0];
+                                    return (
+                                      <TaskColumnBadge
+                                        column={subCol}
+                                        size="sm"
+                                        className={cn("cursor-pointer hover:opacity-80 transition-opacity flex items-center gap-1", !canEditStatus && "opacity-70 cursor-not-allowed")}
+                                      >
+                                        {subCol.name} {canEditStatus && <ChevronDown className="h-2.5 w-2.5" />}
+                                      </TaskColumnBadge>
+                                    );
+                                  })()}
                                 </DropdownMenuTrigger>
                                 <DropdownMenuContent align="start">
-                                  <DropdownMenuLabel className="text-xs">Change Status</DropdownMenuLabel>
+                                  <DropdownMenuLabel className="text-xs">Change Column</DropdownMenuLabel>
                                   <DropdownMenuSeparator />
-                                  {Object.keys(statusColors).map(s => (
+                                  {activeColumns.map(col => (
                                     <DropdownMenuItem 
-                                      key={s} 
+                                      key={col.id} 
                                       onClick={() => {
                                         const oldStatus = subtask.status;
-                                        setProjectTasksList(prev => prev.map(t => t.id === subtask.id ? { ...t, status: s } : t));
+                                        const oldColId = subtask.columnId;
+                                        setProjectTasksList(prev => prev.map(t => t.id === subtask.id ? { ...t, columnId: col.id, column: col } : t));
                                         startTransition(() => {
-                                          updateTaskStatusAction(subtask.id, s)
-                                            .then(() => router.refresh())
+                                          updateTaskStatusAction(subtask.id, col.id)
+                                            .then(() => {
+                                              toast.success(`Subtask moved to ${col.name}`);
+                                              router.refresh();
+                                            })
                                             .catch((err: unknown) => {
-                                              toast.error(err instanceof Error ? err.message : "Failed to unblock task");
-                                              setProjectTasksList(prev => prev.map(t => t.id === subtask.id ? { ...t, status: oldStatus } : t));
+                                              toast.error(err instanceof Error ? err.message : "Failed to update subtask column");
+                                              setProjectTasksList(prev => prev.map(t => t.id === subtask.id ? { ...t, columnId: oldColId, status: oldStatus } : t));
                                             });
                                         });
                                       }} 
-                                      className="text-xs cursor-pointer"
+                                      className="text-xs cursor-pointer flex items-center gap-2"
                                     >
-                                      <div className={cn("w-2 h-2 rounded-full mr-2", statusColors[s].split(" ")[0])} />
-                                      {s.replace("_", " ")}
+                                      <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: col.color }} />
+                                      {col.name}
                                     </DropdownMenuItem>
                                   ))}
                                 </DropdownMenuContent>

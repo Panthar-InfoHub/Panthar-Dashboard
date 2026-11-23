@@ -56,9 +56,9 @@ export async function getDashboardOverview(employee: AuthEmployee) {
         (SELECT COUNT(*) FROM "Project" WHERE status = 'ACTIVE') as "activeProjects",
         (SELECT COUNT(*) FROM "Project" WHERE status = 'PLANNING') as "planningProjects",
         (SELECT COUNT(*) FROM "Project" WHERE status = 'COMPLETED') as "completedProjects",
-        (SELECT COUNT(*) FROM "Task" WHERE status IN ('BACKLOG', 'TODO', 'IN_PROGRESS', 'REVIEW', 'TESTING')) as "openTasks",
-        (SELECT COUNT(*) FROM "Task" WHERE status != 'DONE' AND (CASE WHEN "dueDate"::time = '18:30:00'::time OR "dueDate"::time = '00:00:00'::time THEN "dueDate" + INTERVAL '1 day' ELSE "dueDate" END) < ${now}) as "overdueTasks",
-        (SELECT COUNT(*) FROM "Task" WHERE status = 'DONE' AND "completedAt" >= ${weekStart}) as "completedThisWeek",
+        (SELECT COUNT(*) FROM "Task" t JOIN "BoardColumn" c ON t."columnId" = c.id WHERE c."systemKey" IS DISTINCT FROM 'DONE') as "openTasks",
+        (SELECT COUNT(*) FROM "Task" t JOIN "BoardColumn" c ON t."columnId" = c.id WHERE c."systemKey" IS DISTINCT FROM 'DONE' AND (CASE WHEN t."dueDate"::time = '18:30:00'::time OR t."dueDate"::time = '00:00:00'::time THEN t."dueDate" + INTERVAL '1 day' ELSE t."dueDate" END) < ${now}) as "overdueTasks",
+        (SELECT COUNT(*) FROM "Task" t JOIN "BoardColumn" c ON t."columnId" = c.id WHERE c."systemKey" = 'DONE' AND t."completedAt" >= ${weekStart}) as "completedThisWeek",
         (SELECT COUNT(*) FROM "Employee" WHERE status = 'ACTIVE') as "teamMembers",
         (SELECT COUNT(*) FROM "Team") as "teams",
         (SELECT COUNT(*) FROM "Employee" WHERE status = 'ACTIVE' AND role = 'INTERN') as "interns"
@@ -91,26 +91,31 @@ export async function getDashboardOverview(employee: AuthEmployee) {
     SELECT
       (SELECT COUNT(*) FROM "Task" t 
        INNER JOIN "_TaskAssignees" ta ON t.id = ta."A" 
-       WHERE ta."B" = ${employee.id} AND t.status != 'DONE') as "myOpenTasks",
+       JOIN "BoardColumn" c ON t."columnId" = c.id
+       WHERE ta."B" = ${employee.id} AND c."systemKey" IS DISTINCT FROM 'DONE') as "myOpenTasks",
       
       (SELECT COUNT(*) FROM "Task" t 
        INNER JOIN "_TaskAssignees" ta ON t.id = ta."A" 
-       WHERE ta."B" = ${employee.id} AND t.status != 'DONE' 
+       JOIN "BoardColumn" c ON t."columnId" = c.id
+       WHERE ta."B" = ${employee.id} AND c."systemKey" IS DISTINCT FROM 'DONE' 
          AND (CASE WHEN t."dueDate"::time = '18:30:00'::time OR t."dueDate"::time = '00:00:00'::time THEN t."dueDate" + INTERVAL '1 day' ELSE t."dueDate" END) >= ${now} 
          AND t."dueDate" <= ${weekEnd}) as "myDueThisWeek",
       
       (SELECT COUNT(*) FROM "Task" t 
        INNER JOIN "_TaskAssignees" ta ON t.id = ta."A" 
-       WHERE ta."B" = ${employee.id} AND t.status != 'DONE' 
+       JOIN "BoardColumn" c ON t."columnId" = c.id
+       WHERE ta."B" = ${employee.id} AND c."systemKey" IS DISTINCT FROM 'DONE' 
          AND (CASE WHEN t."dueDate"::time = '18:30:00'::time OR t."dueDate"::time = '00:00:00'::time THEN t."dueDate" + INTERVAL '1 day' ELSE t."dueDate" END) < ${now}) as "myOverdueTasks",
        
       (SELECT COUNT(*) FROM "Task" t 
        INNER JOIN "_TaskAssignees" ta ON t.id = ta."A" 
-       WHERE ta."B" = ${employee.id} AND t.status = 'DONE' AND t."completedAt" >= ${weekStart}) as "myCompletedThisWeek",
+       JOIN "BoardColumn" c ON t."columnId" = c.id
+       WHERE ta."B" = ${employee.id} AND c."systemKey" = 'DONE' AND t."completedAt" >= ${weekStart}) as "myCompletedThisWeek",
        
       (SELECT COUNT(*) FROM "Task" t 
        INNER JOIN "_TaskAssignees" ta ON t.id = ta."A" 
-       WHERE ta."B" = ${employee.id} AND t.status = 'DONE' AND t."completedAt" >= ${monthStart}) as "myCompletedThisMonth",
+       JOIN "BoardColumn" c ON t."columnId" = c.id
+       WHERE ta."B" = ${employee.id} AND c."systemKey" = 'DONE' AND t."completedAt" >= ${monthStart}) as "myCompletedThisMonth",
        
       (SELECT COUNT(*) FROM "Project" p 
        INNER JOIN "ProjectMember" pm ON p.id = pm."projectId" 
@@ -147,11 +152,19 @@ export async function getTaskRadar(employee: AuthEmployee) {
   const now = new Date();
   const weekEnd = addDays(now, 7);
 
+  const notDoneCondition: Prisma.TaskWhereInput = {
+    OR: [
+      { column: { systemKey: null } },
+      { column: { systemKey: "BACKLOG" } },
+    ],
+  };
+
   const tasks = await db.task.findMany({
     where: admin
-      ? { status: { not: "DONE" }, dueDate: { not: null, lte: weekEnd } }
-      : { assignees: { some: { id: employee.id } }, status: { not: "DONE" }, dueDate: { not: null, lte: weekEnd } },
+      ? { AND: [notDoneCondition, { dueDate: { not: null, lte: weekEnd } }] }
+      : { assignees: { some: { id: employee.id } }, AND: [notDoneCondition, { dueDate: { not: null, lte: weekEnd } }] },
     include: {
+      column: true,
       project: { select: { id: true, name: true } },
       assignees: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
     },
@@ -163,7 +176,8 @@ export async function getTaskRadar(employee: AuthEmployee) {
     id: t.id,
     title: t.title,
     priority: t.priority,
-    status: t.status,
+    columnId: t.columnId,
+    column: t.column,
     dueDate: t.dueDate,
     project: t.project,
     assignees: t.assignees,
@@ -183,7 +197,17 @@ export async function getAttentionProjects(employee: AuthEmployee) {
       OR: [
         { priority: "CRITICAL" },
         { endDate: { lte: attentionEndThreshold } },
-        { tasks: { some: { status: { not: "DONE" }, dueDate: { lt: now } } } },
+        {
+          tasks: {
+            some: {
+              OR: [
+                { column: { systemKey: null } },
+                { column: { systemKey: "BACKLOG" } },
+              ],
+              dueDate: { lt: now },
+            },
+          },
+        },
       ],
     },
   ];
@@ -195,7 +219,14 @@ export async function getAttentionProjects(employee: AuthEmployee) {
     where: { AND: conditions },
     include: {
       team: { select: { name: true } },
-      tasks: { select: { id: true, status: true, dueDate: true } },
+      tasks: {
+        select: {
+          id: true,
+          dueDate: true,
+          columnId: true,
+          column: { select: { systemKey: true } },
+        },
+      },
     },
     orderBy: [{ priority: "desc" }, { endDate: "asc" }],
     take: 20,
@@ -203,9 +234,11 @@ export async function getAttentionProjects(employee: AuthEmployee) {
 
   return projects.map((p) => {
     const totalTasks = p.tasks.length;
-    const completedTasks = p.tasks.filter((t) => t.status === "DONE").length;
+    const isDone = (t: { column?: { systemKey: string | null } | null }) =>
+      t.column?.systemKey === "DONE";
+    const completedTasks = p.tasks.filter(isDone).length;
     const computedProgress = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : p.progress;
-    const overdueTasksCount = p.tasks.filter((t) => t.status !== "DONE" && checkIsOverdue(t.dueDate, now)).length;
+    const overdueTasksCount = p.tasks.filter((t) => !isDone(t) && checkIsOverdue(t.dueDate, now)).length;
 
     return {
       id: p.id,
@@ -236,7 +269,12 @@ export async function getDashboardProjectsSummary(employee: AuthEmployee) {
     include: {
       team: { select: { name: true } },
       lead: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
-      tasks: { select: { status: true } },
+      tasks: {
+        select: {
+          columnId: true,
+          column: { select: { systemKey: true } },
+        },
+      },
     },
     orderBy: [{ priority: "desc" }, { updatedAt: "desc" }],
     take: 4,
@@ -244,7 +282,7 @@ export async function getDashboardProjectsSummary(employee: AuthEmployee) {
 
   return projects.map((p) => {
     const totalTasks = p.tasks.length;
-    const completedTasks = p.tasks.filter((t) => t.status === "DONE").length;
+    const completedTasks = p.tasks.filter((t) => t.column?.systemKey === "DONE").length;
     const computedProgress = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : p.progress;
     return { ...p, computedProgress };
   });
@@ -259,10 +297,12 @@ export async function getCompletionTrend(employee: AuthEmployee) {
 
   const [completed, created] = await Promise.all([
     db.$queryRaw<{ date: Date, count: number }[]>`
-      SELECT DATE("completedAt") as date, COUNT(*)::int as count 
-      FROM "Task" 
-      WHERE status = 'DONE' AND "completedAt" >= ${rangeStart} 
-      GROUP BY DATE("completedAt")
+      SELECT DATE(t."completedAt") as date, COUNT(*)::int as count 
+      FROM "Task" t 
+      LEFT JOIN "BoardColumn" c ON t."columnId" = c.id
+      WHERE c."systemKey" = 'DONE'
+        AND t."completedAt" >= ${rangeStart} 
+      GROUP BY DATE(t."completedAt")
     `,
     db.$queryRaw<{ date: Date, count: number }[]>`
       SELECT DATE("createdAt") as date, COUNT(*)::int as count 
@@ -306,7 +346,8 @@ export async function getDashboardChartsData(employee: AuthEmployee) {
       FROM "Task" t
       JOIN "Project" p ON t."projectId" = p.id
       JOIN "Team" tm ON p."teamId" = tm.id
-      WHERE t.status != 'DONE'
+      LEFT JOIN "BoardColumn" c ON t."columnId" = c.id
+      WHERE c."systemKey" IS DISTINCT FROM 'DONE'
       GROUP BY tm.id, tm.name
       ORDER BY value DESC
       LIMIT 6

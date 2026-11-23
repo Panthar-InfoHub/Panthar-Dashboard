@@ -24,15 +24,6 @@ enum EmployeeStatus {
   INACTIVE
 }
 
-enum TaskStatus {
-  BACKLOG
-  TODO
-  IN_PROGRESS
-  REVIEW
-  TESTING
-  DONE
-}
-
 enum TaskPriority {
   LOW
   MEDIUM
@@ -197,9 +188,8 @@ model Task {
   id             String          @id @default(cuid())
   title          String
   description    String?
-  status         TaskStatus      @default(BACKLOG) // NOT NULL in database with default BACKLOG!
-  columnId       String?         // Nullable in database during Expand
-  column         BoardColumn?    @relation(fields: [columnId], references: [id], onDelete: Restrict)
+  columnId       String
+  column         BoardColumn     @relation(fields: [columnId], references: [id], onDelete: Restrict)
   order          Float           @default(0)
   priority       TaskPriority    @default(MEDIUM)
   storyPoints    Int?
@@ -240,10 +230,6 @@ model Task {
   @@index([columnId, projectId])
   @@index([columnId, order])
   @@index([columnId, dueDate])
-  @@index([status, projectId])
-  @@index([status, order])
-  @@index([status])
-  @@index([status, dueDate])
   @@index([projectId])
   @@index([parentId])
   @@index([dueDate])

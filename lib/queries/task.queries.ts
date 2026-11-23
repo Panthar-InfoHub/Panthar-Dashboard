@@ -49,6 +49,7 @@ export async function getKanbanTasks(
     skip,
     take,
     include: {
+      column: true,
       assignees: {
         select: {
           id: true,
@@ -62,6 +63,25 @@ export async function getKanbanTasks(
           id: true,
           name: true,
           team: { select: { id: true, name: true } },
+        },
+      },
+      checklistItems: {
+        select: {
+          id: true,
+          isCompleted: true,
+        },
+      },
+      subtasks: {
+        select: {
+          id: true,
+          title: true,
+          columnId: true,
+          column: true,
+        },
+      },
+      _count: {
+        select: {
+          attachments: true,
         },
       },
     },
@@ -83,6 +103,7 @@ export async function assertCanViewTask(taskId: string, callerEmployee?: AuthEmp
   const task = await db.task.findUnique({
     where: { id: taskId },
     include: {
+      column: true,
       project: {
         include: {
           team: true,
@@ -103,11 +124,12 @@ export async function assertCanViewTask(taskId: string, callerEmployee?: AuthEmp
       },
       subtasks: {
         include: {
+          column: true,
           assignees: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
         },
       },
       blockedBy: {
-        select: { id: true, title: true, status: true },
+        select: { id: true, title: true, columnId: true, column: true },
       },
       checklistItems: {
         orderBy: [{ order: "asc" }, { createdAt: "asc" }],
@@ -194,3 +216,13 @@ export async function getTaskFilterDropdowns() {
 
   return { projects, teams, employees };
 }
+
+/**
+ * Fetch all board columns ordered by display position.
+ */
+export async function getBoardColumns() {
+  return await db.boardColumn.findMany({
+    orderBy: { position: "asc" },
+  });
+}
+

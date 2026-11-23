@@ -1,18 +1,25 @@
 import { db } from "../lib/db";
 
 async function main() {
-  const statuses = ["BACKLOG", "TODO", "IN_PROGRESS", "REVIEW", "TESTING", "DONE"] as const;
+  console.log("Normalizing existing task orders in database by BoardColumn...");
 
-  console.log("Normalizing existing task orders in database...");
+  const columns = await db.boardColumn.findMany({
+    orderBy: { position: "asc" },
+    select: { id: true, name: true, position: true }
+  });
 
-  for (const status of statuses) {
+  console.log(`Found ${columns.length} board columns.`);
+
+  let totalUpdated = 0;
+
+  for (const column of columns) {
     const tasks = await db.task.findMany({
-      where: { status },
-      orderBy: { updatedAt: "desc" },
+      where: { columnId: column.id },
+      orderBy: [{ order: "asc" }, { updatedAt: "desc" }],
       select: { id: true, title: true, order: true }
     });
 
-    console.log(`Status ${status}: ${tasks.length} tasks`);
+    console.log(`Column "${column.name}" (${column.id}): ${tasks.length} tasks`);
 
     for (let i = 0; i < tasks.length; i++) {
       const task = tasks[i];
@@ -21,10 +28,22 @@ async function main() {
         where: { id: task.id },
         data: { order: newOrder }
       });
+      totalUpdated++;
     }
   }
 
-  console.log("Task order normalization complete!");
+  // Check for any unassigned tasks as a safety safeguard
+  const unassignedTasks = await db.task.findMany({
+    where: { columnId: null } as any,
+    orderBy: { updatedAt: "desc" },
+    select: { id: true, title: true }
+  });
+
+  if (unassignedTasks.length > 0) {
+    console.warn(`WARNING: Found ${unassignedTasks.length} tasks with null columnId!`);
+  }
+
+  console.log(`Task order normalization complete! Normalized ${totalUpdated} tasks across ${columns.length} columns.`);
 }
 
-main().catch(console.error);
+main().catch(console.error).finally(() => process.exit(0));

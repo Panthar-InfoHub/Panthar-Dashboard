@@ -64,7 +64,7 @@ async function main() {
         description: "Add a production-ready task checklist directly below description and above blockers.",
         projectId: testProjectId,
         creatorId: testLeadId,
-        status: "IN_PROGRESS",
+        columnId: "col_in_progress",
         priority: "HIGH",
         order: 1000,
       },
