@@ -14,19 +14,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
-import { Filter, Search, ClipboardList, Clock, Loader2, X } from "lucide-react";
+import { Filter, Search, ClipboardList, Clock, Loader2, X, CheckSquare, Paperclip, ListTree } from "lucide-react";
 import { updateTaskStatusAction, rebalanceColumnTasksAction } from "@/lib/actions/task.actions";
 import { toast } from "sonner";
 import { format, isPast, isToday, endOfDay } from "date-fns";
-
-const statusColors: Record<string, string> = { 
-  BACKLOG: "bg-gray-500/10 text-gray-600 dark:text-gray-400 border-gray-500/20 hover:bg-gray-500/20", 
-  TODO: "bg-slate-500/10 text-slate-600 dark:text-slate-400 border-slate-500/20 hover:bg-slate-500/20", 
-  IN_PROGRESS: "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20 hover:bg-blue-500/20", 
-  REVIEW: "bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20 hover:bg-purple-500/20", 
-  TESTING: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20 hover:bg-amber-500/20", 
-  DONE: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20" 
-};
 
 const priorityColors: Record<string, string> = { 
   CRITICAL: "bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/20 hover:bg-red-500/20", 
@@ -42,14 +33,19 @@ const priorityDots: Record<string, string> = {
   LOW: "bg-gray-500" 
 };
 
-const columns = [
-  { id: "BACKLOG", title: "Backlog" },
-  { id: "TODO", title: "Todo" },
-  { id: "IN_PROGRESS", title: "In Progress" },
-  { id: "REVIEW", title: "Review" },
-  { id: "TESTING", title: "Testing" },
-  { id: "DONE", title: "Done" },
-];
+import {
+  type KanbanColumn,
+  BASELINE_COLUMNS,
+  LEGACY_STATUS_TO_COLUMN_ID,
+  getEffectiveColumnId,
+} from "@/lib/validations/board-column";
+
+export {
+  type KanbanColumn,
+  BASELINE_COLUMNS,
+  LEGACY_STATUS_TO_COLUMN_ID,
+  getEffectiveColumnId,
+};
 
 export interface KanbanTaskAssignee {
   id: string;
@@ -61,7 +57,8 @@ export interface KanbanTaskAssignee {
 export interface KanbanSubtask {
   id: string;
   title: string;
-  status: string;
+  status?: string;
+  columnId?: string | null;
 }
 
 export interface KanbanTaskProject {
@@ -76,7 +73,16 @@ export interface KanbanTaskProject {
 export interface KanbanTaskItem {
   id: string;
   title: string;
-  status: string;
+  description?: string | null;
+  status?: string;
+  columnId?: string | null;
+  column?: {
+    id: string;
+    name: string;
+    color: string;
+    position: number;
+    systemKey: string | null;
+  } | null;
   priority: string;
   order: number;
   updatedAt: Date | string;
@@ -84,10 +90,17 @@ export interface KanbanTaskItem {
   isBlocked?: boolean;
   blockerReason?: string | null;
   creatorId?: string | null;
+  completedAt?: Date | string | null;
   labels?: string[];
   project?: KanbanTaskProject | null;
   assignees?: KanbanTaskAssignee[];
   subtasks?: KanbanSubtask[];
+  checklistItems?: { id: string; isCompleted: boolean }[];
+  _count?: {
+    attachments?: number;
+    checklistItems?: number;
+    subtasks?: number;
+  };
 }
 
 export interface KanbanProjectOption {
@@ -109,17 +122,19 @@ export interface KanbanEmployeeOption {
 
 export function KanbanBoard({ 
   initialTasks, 
+  columns = [],
   allowedProjects = [], 
   allowedTeams = [], 
   allEmployees = [],
   currentEmployeeId,
 }: { 
-  initialTasks: KanbanTaskItem[], 
-  allowedProjects?: KanbanProjectOption[], 
-  allowedTeams?: KanbanTeamOption[], 
-  allEmployees?: KanbanEmployeeOption[],
-  currentEmployeeId: string,
-  employeeRole?: string
+  initialTasks: KanbanTaskItem[]; 
+  columns?: KanbanColumn[];
+  allowedProjects?: KanbanProjectOption[]; 
+  allowedTeams?: KanbanTeamOption[]; 
+  allEmployees?: KanbanEmployeeOption[];
+  currentEmployeeId: string;
+  employeeRole?: string;
 }) {
   const [taskList, setTaskList] = useState(initialTasks);
   const searchParams = useSearchParams();
@@ -133,8 +148,8 @@ export function KanbanBoard({
     index: number; // insertion target index in the column
   } | null>(null);
 
-  // In-flight status & order changes to protect optimistic UI against stale server revalidations
-  const inFlightStatusUpdatesRef = useRef<Map<string, { status: string; order?: number }>>(new Map());
+  // In-flight column & order changes to protect optimistic UI against stale server revalidations
+  const inFlightColumnUpdatesRef = useRef<Map<string, { columnId: string; order?: number }>>(new Map());
 
   const [optimisticFilters, setOptimisticFilters] = useState<{
     team?: string;
@@ -146,14 +161,21 @@ export function KanbanBoard({
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const router = useRouter();
 
+  // Sort active columns by position ascending (Backlog first, manageable middle, Done last)
+  const activeColumns = useMemo(() => {
+    const list = columns && columns.length > 0 ? [...columns] : [...BASELINE_COLUMNS];
+    return list.sort((a, b) => a.position - b.position);
+  }, [columns]);
+
   useEffect(() => {
     // Preserve any optimistic updates that are still in flight with the server
     setTaskList(
       initialTasks.map(t => {
-        const inFlight = inFlightStatusUpdatesRef.current.get(t.id);
+        const inFlight = inFlightColumnUpdatesRef.current.get(t.id);
+        const effectiveColId = getEffectiveColumnId(t);
         return inFlight 
-          ? { ...t, status: inFlight.status, ...(inFlight.order !== undefined ? { order: inFlight.order } : {}) } 
-          : t;
+          ? { ...t, columnId: inFlight.columnId, ...(inFlight.order !== undefined ? { order: inFlight.order } : {}) } 
+          : { ...t, columnId: effectiveColId };
       })
     );
     setOptimisticFilters({});
@@ -202,21 +224,18 @@ export function KanbanBoard({
     });
   }, [taskList, urlSearch, urlTeam, urlProject, urlAssignee]);
 
-  // Tasks grouped by status, sorted by order asc, then updatedAt desc
-  const tasksByStatus = useMemo(() => {
-    const map: Record<string, KanbanTaskItem[]> = {
-      BACKLOG: [],
-      TODO: [],
-      IN_PROGRESS: [],
-      REVIEW: [],
-      TESTING: [],
-      DONE: [],
-    };
+  // Tasks grouped dynamically by columnId, sorted by order asc, then updatedAt desc
+  const tasksByColumn = useMemo(() => {
+    const map: Record<string, KanbanTaskItem[]> = {};
+    for (const col of activeColumns) {
+      map[col.id] = [];
+    }
     for (const t of filteredTasks) {
-      if (map[t.status]) {
-        map[t.status].push(t);
+      const colId = getEffectiveColumnId(t);
+      if (map[colId]) {
+        map[colId].push(t);
       } else {
-        map[t.status] = [t];
+        map[colId] = [t];
       }
     }
     for (const key in map) {
@@ -228,13 +247,13 @@ export function KanbanBoard({
       });
     }
     return map;
-  }, [filteredTasks]);
+  }, [activeColumns, filteredTasks]);
 
-  // In the List view, push DONE tasks to the bottom, then sort by order
+  // In the List view, push Done tasks to the bottom, then sort by order
   const listTasks = useMemo(() => {
     return [...filteredTasks].sort((a, b) => {
-      const aDone = a.status === "DONE";
-      const bDone = b.status === "DONE";
+      const aDone = a.column?.systemKey === "DONE" || a.status === "DONE";
+      const bDone = b.column?.systemKey === "DONE" || b.status === "DONE";
       if (aDone && !bDone) return 1;
       if (!aDone && bDone) return -1;
       const orderA = a.order ?? 0;
@@ -313,17 +332,17 @@ export function KanbanBoard({
     setDragOverInfo(null);
   };
 
-  const handleColumnDragOver = (e: React.DragEvent, columnId: string) => {
+  const handleColumnDragOver = (e: React.DragEvent, targetColumnId: string) => {
     e.preventDefault();
     e.dataTransfer.dropEffect = "move";
-    const colTasks = (tasksByStatus[columnId] || []).filter(t => t.id !== draggedTaskId);
+    const colTasks = (tasksByColumn[targetColumnId] || []).filter(t => t.id !== draggedTaskId);
     setDragOverInfo(prev => {
-      if (prev && prev.columnId === columnId) return prev;
-      return { columnId, index: colTasks.length };
+      if (prev && prev.columnId === targetColumnId) return prev;
+      return { columnId: targetColumnId, index: colTasks.length };
     });
   };
 
-  const handleCardDragOver = (e: React.DragEvent, columnId: string, cardIndex: number) => {
+  const handleCardDragOver = (e: React.DragEvent, targetColumnId: string, cardIndex: number) => {
     e.preventDefault();
     e.stopPropagation();
     e.dataTransfer.dropEffect = "move";
@@ -333,12 +352,12 @@ export function KanbanBoard({
     const insertIndex = e.clientY < midY ? cardIndex : cardIndex + 1;
 
     setDragOverInfo({
-      columnId,
+      columnId: targetColumnId,
       index: insertIndex,
     });
   };
 
-  const handleDrop = async (e: React.DragEvent, statusId: string) => {
+  const handleDrop = async (e: React.DragEvent, targetColumnId: string) => {
     e.preventDefault();
     e.stopPropagation();
 
@@ -352,20 +371,23 @@ export function KanbanBoard({
     const task = taskList.find(t => t.id === taskId);
     if (!task) return;
 
-    const oldStatus = task.status;
+    const targetCol = activeColumns.find(c => c.id === targetColumnId);
+    if (!targetCol) return;
+
+    const oldColumnId = getEffectiveColumnId(task);
     const oldOrder = task.order ?? 0;
 
     // Remaining tasks in target column (excluding the dragged task)
-    const otherTasksInTarget = (tasksByStatus[statusId] || []).filter(t => t.id !== taskId);
+    const otherTasksInTarget = (tasksByColumn[targetColumnId] || []).filter(t => t.id !== taskId);
     
-    const targetIndex = currentDragInfo && currentDragInfo.columnId === statusId
+    const targetIndex = currentDragInfo && currentDragInfo.columnId === targetColumnId
       ? Math.min(Math.max(0, currentDragInfo.index), otherTasksInTarget.length)
       : otherTasksInTarget.length;
 
     const newOrder = calculateNewOrder(otherTasksInTarget, targetIndex);
 
-    // If neither status nor position changed, skip
-    if (task.status === statusId && Math.abs((task.order ?? 0) - newOrder) < 0.0001) {
+    // If neither column nor position changed, skip
+    if (oldColumnId === targetColumnId && Math.abs((task.order ?? 0) - newOrder) < 0.0001) {
       return;
     }
 
@@ -374,8 +396,17 @@ export function KanbanBoard({
     const nextOrder = targetIndex < otherTasksInTarget.length ? (otherTasksInTarget[targetIndex]?.order ?? 0) : 0;
     const isGapTooTight = targetIndex > 0 && targetIndex < otherTasksInTarget.length && Math.abs(nextOrder - prevOrder) < 0.001;
 
-    // 1. Instant Optimistic UI Update (Zero delay, zero skeletons, zero loaders)
-    const updatedTask = { ...task, status: statusId, order: newOrder };
+    // 1. Instant Optimistic UI Update (Zero delay, zero loaders)
+    const isDoneTransition = targetCol.systemKey === "DONE";
+    const wasDone = task.column?.systemKey === "DONE";
+    const updatedTask: KanbanTaskItem = {
+      ...task,
+      columnId: targetColumnId,
+      column: targetCol,
+      status: targetCol.systemKey || (targetCol.id === "col_backlog" ? "BACKLOG" : (targetCol.id === "col_done" ? "DONE" : task.status || "")),
+      order: newOrder,
+      completedAt: isDoneTransition ? new Date() : (wasDone ? null : task.completedAt),
+    };
 
     if (isGapTooTight) {
       // Auto-rebalance the column tasks back to clean 1,000-unit spaced integers
@@ -383,14 +414,14 @@ export function KanbanBoard({
       rebalanced.splice(targetIndex, 0, updatedTask);
       const idToOrder = new Map(rebalanced.map((t, idx) => [t.id, (idx + 1) * 1000]));
 
-      setTaskList(prev => prev.map(t => idToOrder.has(t.id) ? { ...t, order: idToOrder.get(t.id)!, ...(t.id === taskId ? { status: statusId } : {}) } : t));
+      setTaskList(prev => prev.map(t => idToOrder.has(t.id) ? { ...t, order: idToOrder.get(t.id)!, ...(t.id === taskId ? { columnId: targetColumnId, column: targetCol } : {}) } : t));
       
-      // Persist status change and column rebalance in background
-      updateTaskStatusAction(taskId, statusId, idToOrder.get(taskId)!)
+      // Persist column change and column rebalance in background
+      updateTaskStatusAction(taskId, targetColumnId, idToOrder.get(taskId)!)
         .then(() => rebalanceColumnTasksAction(rebalanced.map(t => t.id)))
         .then(() => toast.success("Task updated"))
         .catch(() => {
-          setTaskList(prev => prev.map(t => t.id === taskId ? { ...t, status: oldStatus, order: oldOrder } : t));
+          setTaskList(prev => prev.map(t => t.id === taskId ? { ...t, columnId: oldColumnId, order: oldOrder } : t));
           toast.error("Failed to update task position");
         });
       return;
@@ -399,21 +430,21 @@ export function KanbanBoard({
     setTaskList(prev => prev.map(t => t.id === taskId ? updatedTask : t));
 
     // 2. Track in-flight update to prevent server revalidation race conditions
-    inFlightStatusUpdatesRef.current.set(taskId, { status: statusId, order: newOrder });
+    inFlightColumnUpdatesRef.current.set(taskId, { columnId: targetColumnId, order: newOrder });
 
-    // 3. Background Async Server Action (No startTransition!)
+    // 3. Background Async Server Action
     try {
-      const res = await updateTaskStatusAction(taskId, statusId, newOrder);
+      const res = await updateTaskStatusAction(taskId, targetColumnId, newOrder);
       if (!res?.success) {
         throw new Error("Failed to update status");
       }
       toast.success("Task updated");
     } catch (err: unknown) {
       // Revert optimistic update
-      setTaskList(prev => prev.map(t => t.id === taskId ? { ...t, status: oldStatus, order: oldOrder } : t));
+      setTaskList(prev => prev.map(t => t.id === taskId ? { ...t, columnId: oldColumnId, order: oldOrder } : t));
       toast.error(err instanceof Error ? err.message : "Failed to update task");
     } finally {
-      inFlightStatusUpdatesRef.current.delete(taskId);
+      inFlightColumnUpdatesRef.current.delete(taskId);
     }
   };
 
@@ -526,9 +557,9 @@ export function KanbanBoard({
 
           <TabsContent value="board" className="mt-0 pt-4 flex-1 focus-visible:outline-none">
             <div className="flex overflow-x-auto pb-4 gap-4 snap-x [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
-              {columns.map(col => {
-                const colTasks = tasksByStatus[col.id] || [];
-                const isDoneCol = col.id === "DONE";
+              {activeColumns.map(col => {
+                const colTasks = tasksByColumn[col.id] || [];
+                const isDoneCol = col.systemKey === "DONE";
                 const visibleTasks = (isDoneCol && !showAllDone) ? colTasks.slice(0, 8) : colTasks;
                 const isColumnActive = dragOverInfo?.columnId === col.id;
 
@@ -544,7 +575,18 @@ export function KanbanBoard({
                   >
                     <div className="flex items-center justify-between mb-3 px-1">
                       <div className="flex items-center gap-2">
-                        <Badge variant="outline" className={cn("text-[10px]", statusColors[col.id])}>{col.title}</Badge>
+                        <Badge 
+                          variant="outline" 
+                          className="text-[10px] font-medium flex items-center gap-1.5 px-2 py-0.5"
+                          style={{
+                            backgroundColor: `${col.color}15`,
+                            borderColor: `${col.color}35`,
+                            color: col.color,
+                          }}
+                        >
+                          <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: col.color }} />
+                          <span>{col.name}</span>
+                        </Badge>
                         <span className="text-[10px] text-muted-foreground font-medium">{colTasks.length}</span>
                       </div>
                     </div>
@@ -598,11 +640,11 @@ export function KanbanBoard({
                                 </div>
 
                                 <div className="flex items-center justify-between mt-1">
-                                  <div className="flex items-center gap-1.5">
+                                  <div className="flex items-center gap-2 flex-wrap">
                                     <div className={cn("h-1.5 w-1.5 rounded-full shrink-0", priorityDots[task.priority] || "bg-muted")} title={`Priority: ${task.priority}`} />
                                     {task.dueDate && (() => {
                                       const date = new Date(task.dueDate);
-                                      const isOverdue = task.status !== "DONE" && !isToday(date) && isPast(endOfDay(date));
+                                      const isOverdue = !isDoneCol && !isToday(date) && isPast(endOfDay(date));
                                       return (
                                         <span className={cn("text-[9px] font-medium flex items-center gap-1", isOverdue ? "text-red-500/90 font-medium" : "text-muted-foreground")}>
                                           <Clock className={cn("h-2.5 w-2.5", isOverdue && "text-red-500")} />
@@ -615,6 +657,34 @@ export function KanbanBoard({
                                         </span>
                                       );
                                     })()}
+
+                                    {/* Checklist item indicator (Ticket 1) */}
+                                    {task.checklistItems && task.checklistItems.length > 0 && (() => {
+                                      const total = task.checklistItems.length;
+                                      const completed = task.checklistItems.filter(i => i.isCompleted).length;
+                                      return (
+                                        <span className="text-[9px] font-medium text-muted-foreground flex items-center gap-1" title={`${completed}/${total} checklist items completed`}>
+                                          <CheckSquare className="h-2.5 w-2.5 text-muted-foreground" />
+                                          <span>{completed}/{total}</span>
+                                        </span>
+                                      );
+                                    })()}
+
+                                    {/* Attachment count indicator (Ticket 2) */}
+                                    {(task._count?.attachments ?? 0) > 0 && (
+                                      <span className="text-[9px] font-medium text-muted-foreground flex items-center gap-1" title={`${task._count?.attachments} attachment(s)`}>
+                                        <Paperclip className="h-2.5 w-2.5 text-muted-foreground" />
+                                        <span>{task._count?.attachments}</span>
+                                      </span>
+                                    )}
+
+                                    {/* Subtask count indicator */}
+                                    {task.subtasks && task.subtasks.length > 0 && (
+                                      <span className="text-[9px] font-medium text-muted-foreground flex items-center gap-1" title={`${task.subtasks.length} subtask(s)`}>
+                                        <ListTree className="h-2.5 w-2.5 text-muted-foreground" />
+                                        <span>{task.subtasks.length}</span>
+                                      </span>
+                                    )}
                                   </div>
                                   
                                   {task.labels && task.labels.length > 0 && (
@@ -674,7 +744,7 @@ export function KanbanBoard({
                 <TableHeader className="bg-muted/20">
                   <TableRow>
                     <TableHead className="min-w-[250px] font-medium text-[11px] uppercase tracking-wider">Task</TableHead>
-                    <TableHead className="min-w-[120px] font-medium text-[11px] uppercase tracking-wider">Status</TableHead>
+                    <TableHead className="min-w-[120px] font-medium text-[11px] uppercase tracking-wider">Column</TableHead>
                     <TableHead className="min-w-[120px] font-medium text-[11px] uppercase tracking-wider">Priority</TableHead>
                     <TableHead className="min-w-[150px] font-medium text-[11px] uppercase tracking-wider">Assignee</TableHead>
                     <TableHead className="min-w-[120px] font-medium text-[11px] uppercase tracking-wider">Due Date</TableHead>
@@ -683,6 +753,10 @@ export function KanbanBoard({
                 <TableBody>
                   {listTasks.map(task => {
                     const assignee = task.assignees && task.assignees.length > 0 ? task.assignees[0] : null;
+                    const colId = getEffectiveColumnId(task);
+                    const col = activeColumns.find(c => c.id === colId);
+                    const isDone = col?.systemKey === "DONE";
+
                     return (
                       <TableRow 
                         key={task.id} 
@@ -700,7 +774,24 @@ export function KanbanBoard({
                           </div>
                         </TableCell>
                         <TableCell>
-                          <Badge variant="outline" className={cn("text-[10px] shadow-none", statusColors[task.status])}>{task.status.replace("_", " ")}</Badge>
+                          {col ? (
+                            <Badge
+                              variant="outline"
+                              className="text-[10px] shadow-none flex items-center gap-1.5 w-fit px-2 py-0.5"
+                              style={{
+                                backgroundColor: `${col.color}15`,
+                                borderColor: `${col.color}35`,
+                                color: col.color,
+                              }}
+                            >
+                              <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: col.color }} />
+                              <span>{col.name}</span>
+                            </Badge>
+                          ) : (
+                            <Badge variant="outline" className="text-[10px] shadow-none">
+                              {task.column?.name || "Backlog"}
+                            </Badge>
+                          )}
                         </TableCell>
                         <TableCell>
                           <Badge variant="outline" className={cn("text-[10px] shadow-none", priorityColors[task.priority])}>
@@ -724,7 +815,7 @@ export function KanbanBoard({
                         <TableCell>
                           {task.dueDate ? (() => {
                             const date = new Date(task.dueDate);
-                            const isOverdue = task.status !== "DONE" && !isToday(date) && isPast(endOfDay(date));
+                            const isOverdue = !isDone && !isToday(date) && isPast(endOfDay(date));
                             return (
                               <div className="flex items-center gap-1.5 text-xs flex-wrap">
                                 <Clock className={cn("h-3.5 w-3.5", isOverdue ? "text-red-500" : "text-muted-foreground")} />

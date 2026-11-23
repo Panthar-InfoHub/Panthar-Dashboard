@@ -22,15 +22,20 @@ export async function getProjectsList() {
       members: { 
         include: { employee: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } } } 
       },
-      tasks: { select: { status: true } }
+      tasks: {
+        select: {
+          columnId: true,
+          column: { select: { systemKey: true } },
+        },
+      },
     },
     orderBy: { updatedAt: "desc" }
   });
 
-  // Calculate computed progress based on tasks
+  // Calculate computed progress based on tasks (authoritatively bound to column.systemKey === "DONE")
   return projects.map((p) => {
     const totalTasks = p.tasks.length;
-    const completedTasks = p.tasks.filter((t) => t.status === "DONE").length;
+    const completedTasks = p.tasks.filter((t) => t.column?.systemKey === "DONE").length;
     const computedProgress = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : p.progress;
 
     return {
@@ -53,6 +58,7 @@ export async function getProjectById(projectId: string) {
       },
       tasks: {
         include: {
+          column: true,
           assignees: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } }
         },
         orderBy: { updatedAt: "desc" }
@@ -74,7 +80,7 @@ export async function getProjectById(projectId: string) {
   }
 
   const totalTasks = project.tasks.length;
-  const completedTasks = project.tasks.filter((t) => t.status === "DONE").length;
+  const completedTasks = project.tasks.filter((t) => t.column?.systemKey === "DONE").length;
   const computedProgress = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : project.progress;
 
   return {

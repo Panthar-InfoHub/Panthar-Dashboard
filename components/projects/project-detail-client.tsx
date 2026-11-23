@@ -17,10 +17,10 @@ import { cn } from "@/lib/utils";
 import { updateProjectAction, manageProjectMembersAction, updateProjectStatusAction, updateProjectPriorityAction, deleteProjectAction } from "@/lib/actions/project.actions";
 
 import { MemberPermissionsDialog, type DelegatedPermission } from "./member-permissions-dialog";
+import { TaskColumnBadge } from "@/components/tasks/task-column-badge";
 
 const statusColors: Record<string, string> = { ACTIVE: "bg-blue-500/10 text-blue-600 border-blue-500/20", PLANNING: "bg-purple-500/10 text-purple-600 border-purple-500/20", PAUSED: "bg-orange-500/10 text-orange-600 border-orange-500/20", COMPLETED: "bg-emerald-500/10 text-emerald-600 border-emerald-500/20", ARCHIVED: "bg-gray-500/10 text-gray-600 border-gray-500/20" };
 const priorityColors: Record<string, string> = { CRITICAL: "bg-red-500/10 text-red-600 border-red-500/20", HIGH: "bg-orange-500/10 text-orange-600 border-orange-500/20", MEDIUM: "bg-blue-500/10 text-blue-600 border-blue-500/20", LOW: "bg-gray-500/10 text-gray-600 border-gray-500/20" };
-const taskStatusColors: Record<string, string> = { BACKLOG: "bg-gray-500/10 text-gray-600 border-gray-500/20", TODO: "bg-slate-500/10 text-slate-600 border-slate-500/20", IN_PROGRESS: "bg-blue-500/10 text-blue-600 border-blue-500/20", REVIEW: "bg-purple-500/10 text-purple-600 border-purple-500/20", TESTING: "bg-amber-500/10 text-amber-600 border-amber-500/20", DONE: "bg-emerald-500/10 text-emerald-600 border-emerald-500/20" };
 
 export interface ProjectDetailTaskAssignee {
   id: string;
@@ -32,7 +32,15 @@ export interface ProjectDetailTaskAssignee {
 export interface ProjectDetailTask {
   id: string;
   title: string;
-  status: string;
+  status?: string;
+  columnId?: string | null;
+  column?: {
+    id: string;
+    name: string;
+    color: string;
+    position?: number;
+    systemKey?: string | null;
+  } | null;
   dueDate?: string | Date | null;
   parentId?: string | null;
   assignees?: ProjectDetailTaskAssignee[];
@@ -93,7 +101,9 @@ export function ProjectDetailClient({ project, allEmployees = [], allTeams = [],
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
 
-  const completedTasks = project.tasks.filter((t) => t.status === "DONE").length;
+  const isTaskCompleted = (t: ProjectDetailTask) =>
+    t.column?.systemKey === "DONE";
+  const completedTasks = project.tasks.filter(isTaskCompleted).length;
   const totalTasks = project.tasks.length;
   
   const [expandedTasks, setExpandedTasks] = useState<Record<string, boolean>>({});
@@ -357,9 +367,10 @@ export function ProjectDetailClient({ project, allEmployees = [], allTeams = [],
                                     </Link>
                                   </div>
                                   <div className="flex items-center gap-3 text-xs text-muted-foreground pl-7">
-                                    <Badge variant="outline" className={cn("text-[9px] px-1.5 py-0 shadow-none rounded-sm", taskStatusColors[task.status])}>
-                                      {task.status.replace("_", " ")}
-                                    </Badge>
+                                    <TaskColumnBadge
+                                      column={task.column}
+                                      size="sm"
+                                    />
                                     {task.dueDate && (
                                       <span className="flex items-center gap-1.5">
                                         <Clock className="h-3 w-3" />

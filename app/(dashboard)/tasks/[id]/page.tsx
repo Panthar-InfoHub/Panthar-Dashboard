@@ -1,4 +1,4 @@
-import { getTaskById } from "@/lib/queries/task.queries";
+import { getTaskById, getBoardColumns } from "@/lib/queries/task.queries";
 import { notFound } from "next/navigation";
 import { getCurrentEmployee, checkPermission } from "@/lib/auth";
 import { TaskDetailClient } from "@/components/tasks/task-detail-client";
@@ -6,11 +6,12 @@ import { db } from "@/lib/db";
 
 export default async function TaskDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const [employee, canUpdateGlobal, canDelete, canCreateGlobal] = await Promise.all([
+  const [employee, canUpdateGlobal, canDelete, canCreateGlobal, columns] = await Promise.all([
     getCurrentEmployee(),
     checkPermission("task:update"),
     checkPermission("task:delete"),
     checkPermission("task:create"),
+    getBoardColumns(),
   ]);
 
   const canManageAttachments = canCreateGlobal || canUpdateGlobal;
@@ -30,11 +31,29 @@ export default async function TaskDetailPage({ params }: { params: Promise<{ id:
   // Only fetch tasks in the same project for the blocker dropdown — not ALL tasks
   const projectTasks = await db.task.findMany({
     where: { projectId: task.projectId, id: { not: task.id } },
-    select: { id: true, title: true, status: true, projectId: true, priority: true },
+    select: {
+      id: true,
+      title: true,
+      columnId: true,
+      column: { select: { id: true, name: true, color: true, systemKey: true } },
+      projectId: true,
+      priority: true,
+    },
     orderBy: { updatedAt: "desc" },
     take: 100,
   });
 
-  return <TaskDetailClient initialTask={task} projectTasks={projectTasks} canEditDetails={canEditDetails} canEditStatus={canEditStatus} canDelete={canDelete} canManageAttachments={canManageAttachments} currentEmployeeId={employee.id} />;
+  return (
+    <TaskDetailClient
+      initialTask={task}
+      projectTasks={projectTasks}
+      columns={columns}
+      canEditDetails={canEditDetails}
+      canEditStatus={canEditStatus}
+      canDelete={canDelete}
+      canManageAttachments={canManageAttachments}
+      currentEmployeeId={employee.id}
+    />
+  );
 }
 

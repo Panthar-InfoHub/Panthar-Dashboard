@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Plus } from "lucide-react";
-import { getKanbanTasks, getTaskFilterDropdowns } from "@/lib/queries/task.queries";
+import { getKanbanTasks, getTaskFilterDropdowns, getBoardColumns } from "@/lib/queries/task.queries";
 import { KanbanBoard } from "@/components/tasks/kanban-board";
 
 import { getCurrentEmployee, checkPermission } from "@/lib/auth";
@@ -19,9 +19,10 @@ async function TasksDataAsync({ searchParams }: { searchParams: Promise<{ [key: 
     checkPermission("task:create"),
   ]);
 
-  const [tasks, filterOptions] = await Promise.all([
+  const [tasks, filterOptions, columns] = await Promise.all([
     getKanbanTasks(resolvedParams),
     filterOptionsPromise,
+    getBoardColumns(),
   ]);
 
   return (
@@ -37,7 +38,8 @@ async function TasksDataAsync({ searchParams }: { searchParams: Promise<{ [key: 
       </div>
 
       <KanbanBoard 
-        initialTasks={tasks} 
+        initialTasks={tasks}
+        columns={columns}
         allowedProjects={filterOptions.projects} 
         allowedTeams={filterOptions.teams} 
         allEmployees={filterOptions.employees}

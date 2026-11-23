@@ -1,5 +1,6 @@
 import { db } from "@/lib/db";
 import { getCurrentEmployee, checkPermission } from "@/lib/auth";
+import { getBoardColumns } from "@/lib/queries/task.queries";
 import { NewTaskForm } from "@/components/tasks/new-task-form";
 import { notFound } from "next/navigation";
 
@@ -10,6 +11,7 @@ export default async function EditTaskPage({ params }: { params: Promise<{ id: s
   const task = await db.task.findUnique({
     where: { id },
     include: {
+      column: true,
       assignees: true,
       project: {
         include: { members: true }
@@ -47,8 +49,8 @@ export default async function EditTaskPage({ params }: { params: Promise<{ id: s
     members: { some: { employeeId: employee.id } }
   };
 
-  // Fetch projects the user can assign tasks to, and active employees to act as assignees
-  const [projects, employees] = await Promise.all([
+  // Fetch projects the user can assign tasks to, active employees, and board columns
+  const [projects, employees, columns] = await Promise.all([
     db.project.findMany({
       where: projectWhereClause,
       select: { id: true, name: true },
@@ -58,8 +60,18 @@ export default async function EditTaskPage({ params }: { params: Promise<{ id: s
       where: { status: "ACTIVE" },
       select: { id: true, firstName: true, lastName: true },
       orderBy: { firstName: "asc" }
-    })
+    }),
+    getBoardColumns(),
   ]);
 
-  return <NewTaskForm projects={projects} employees={employees} initialData={task} canAssign={canEditGlobal} canManageAttachments={canManageAttachments} />;
+  return (
+    <NewTaskForm
+      projects={projects}
+      employees={employees}
+      columns={columns}
+      initialData={task}
+      canAssign={canEditGlobal}
+      canManageAttachments={canManageAttachments}
+    />
+  );
 }

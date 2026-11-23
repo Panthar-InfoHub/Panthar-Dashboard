@@ -9,7 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ArrowLeft, Plus, Check, Calendar as CalendarIcon, ChevronsUpDown, X, Paperclip, Loader2 } from "lucide-react";
 import Link from "next/link";
-import { createTaskAction, updateTaskAction } from "@/lib/actions/task.actions";
+import { createTaskAction, updateTaskAction, updateTaskStatusAction } from "@/lib/actions/task.actions";
 import { createAttachmentUploadAction, confirmAttachmentUploadAction } from "@/lib/actions/attachment.actions";
 import { formatBytes, getFileIcon } from "@/components/tasks/task-attachments";
 import { format } from "date-fns";
@@ -17,6 +17,7 @@ import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Badge } from "@/components/ui/badge";
+import { KanbanColumn, BASELINE_COLUMNS } from "@/lib/validations/board-column";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
@@ -27,6 +28,8 @@ export interface TaskFormInitialData {
   title?: string;
   description?: string | null;
   priority?: TaskPriorityLevel;
+  columnId?: string | null;
+  column?: { id: string; name: string; color: string; systemKey?: string | null } | null;
   assignees?: { id: string }[];
   projectId?: string;
   startDate?: Date | string | null;
@@ -37,17 +40,22 @@ export interface TaskFormInitialData {
 export function NewTaskForm({ 
   projects, 
   employees,
+  columns = [],
   initialData,
   canAssign,
   canManageAttachments = false
 }: { 
   projects: { id: string; name: string }[];
   employees: { id: string; firstName: string; lastName: string }[];
+  columns?: KanbanColumn[];
   initialData?: TaskFormInitialData;
   canAssign?: boolean;
   canManageAttachments?: boolean;
 }) {
   const router = useRouter();
+  const activeColumns = columns && columns.length > 0 ? columns : BASELINE_COLUMNS;
+  const defaultBacklogId = activeColumns.find(c => c.systemKey === "BACKLOG")?.id || activeColumns[0]?.id || "col_backlog";
+
   const [isPending, startTransition] = useTransition();
   const [openAssignee, setOpenAssignee] = useState(false);
   const [pendingFiles, setPendingFiles] = useState<{ file: File; id: string }[]>([]);
@@ -61,6 +69,7 @@ export function NewTaskForm({
     title: string;
     description: string;
     priority: TaskPriorityLevel;
+    columnId: string;
     assigneeIds: string[];
     project: string;
     startDate: Date | undefined;
@@ -79,6 +88,7 @@ export function NewTaskForm({
       title: initialData?.title || "", 
       description: initialData?.description || "",
       priority: (initialData?.priority as TaskPriorityLevel) || "MEDIUM", 
+      columnId: initialData?.columnId || defaultBacklogId,
       assigneeIds: initialData?.assignees?.map((a: { id: string }) => a.id) || [],
       project: initialData?.projectId || projects[0]?.id || "",
       startDate: start,
@@ -247,6 +257,9 @@ export function NewTaskForm({
             dueDate: newTask.dueDate,
             blockers: newTask.blockers,
           });
+          if (newTask.columnId && newTask.columnId !== initialData.columnId) {
+            await updateTaskStatusAction(initialData.id, newTask.columnId);
+          }
           activeTaskId = initialData.id;
         } else if (createdTaskId) {
           // Task was already created on a prior attempt; update any task changes without recreating
@@ -260,6 +273,9 @@ export function NewTaskForm({
             dueDate: newTask.dueDate,
             blockers: newTask.blockers,
           });
+          if (newTask.columnId) {
+            await updateTaskStatusAction(createdTaskId, newTask.columnId);
+          }
           activeTaskId = createdTaskId;
         } else {
           // Create new task
@@ -272,6 +288,7 @@ export function NewTaskForm({
             startDate: newTask.startDate,
             dueDate: newTask.dueDate,
             blockers: newTask.blockers,
+            columnId: newTask.columnId || undefined,
           });
           activeTaskId = res.taskId;
           setCreatedTaskId(res.taskId);
@@ -613,6 +630,33 @@ export function NewTaskForm({
                     <SelectItem value="MEDIUM">Medium</SelectItem>
                     <SelectItem value="HIGH">High</SelectItem>
                     <SelectItem value="CRITICAL">Critical</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="h-px w-full bg-border/50 my-2" />
+
+              <div className="space-y-1.5 flex flex-col">
+                <label className="text-xs font-semibold text-muted-foreground">Board Column</label>
+                <Select
+                  value={newTask.columnId}
+                  onValueChange={(v: string) => setNewTask({ ...newTask, columnId: v })}
+                >
+                  <SelectTrigger className="bg-background">
+                    <SelectValue placeholder="Select column" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {activeColumns.map((col) => (
+                      <SelectItem key={col.id} value={col.id}>
+                        <div className="flex items-center gap-2">
+                          <span
+                            className="h-2 w-2 rounded-full shrink-0"
+                            style={{ backgroundColor: col.color }}
+                          />
+                          <span>{col.name}</span>
+                        </div>
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>

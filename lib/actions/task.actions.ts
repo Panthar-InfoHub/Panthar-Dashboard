@@ -1,26 +1,27 @@
 "use server";
 
 import { db } from "@/lib/db";
-import { requireAuth, getCurrentEmployee, checkPermission } from "@/lib/auth";
+import { requireAuth, getCurrentEmployee, checkPermission, type AuthEmployee } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
 import { getKanbanTasks } from "@/lib/queries/task.queries";
-import type { TaskStatus, TaskPriority } from "@/lib/generated/prisma";
+import type { TaskPriority } from "@/lib/generated/prisma";
 import { deleteObjects } from "@/lib/r2";
 
 // ─── Validation Helpers ───
 
-const VALID_STATUSES: TaskStatus[] = ["BACKLOG", "TODO", "IN_PROGRESS", "REVIEW", "TESTING", "DONE"];
 const VALID_PRIORITIES: TaskPriority[] = ["LOW", "MEDIUM", "HIGH", "CRITICAL"];
-
-function assertValidStatus(value: unknown): asserts value is TaskStatus {
-  if (!VALID_STATUSES.includes(value as TaskStatus)) {
-    throw new Error(`Invalid task status: ${String(value)}`);
-  }
-}
 
 function assertValidPriority(value: unknown): asserts value is TaskPriority {
   if (!VALID_PRIORITIES.includes(value as TaskPriority)) {
     throw new Error(`Invalid task priority: ${String(value)}`);
+  }
+}
+
+function safeRevalidatePath(path: string, type?: "page" | "layout") {
+  try {
+    revalidatePath(path, type);
+  } catch {
+    // In tests or non-request contexts, static generation store is not present
   }
 }
 
@@ -35,20 +36,43 @@ export async function createTaskAction(data: {
   startDate?: Date;
   dueDate?: Date;
   blockers?: string;
+  columnId?: string;
 }) {
-  const employee = await requireAuth("task:create");
+  const employee = await requireAuth("task:create", data.projectId);
 
   if (!data.title?.trim()) throw new Error("Task title is required.");
   if (!data.projectId?.trim()) throw new Error("Project ID is required.");
   assertValidPriority(data.priority);
 
-  // Position new tasks at the top of BACKLOG
+  // Resolve target column (defaults to BACKLOG system column if omitted/empty)
+  let resolvedColumnId: string;
+  let targetCol: { id: string; systemKey: string | null } | null = null;
+  if (data.columnId && data.columnId.trim()) {
+    targetCol = await db.boardColumn.findUnique({
+      where: { id: data.columnId.trim() },
+      select: { id: true, systemKey: true },
+    });
+    if (!targetCol) {
+      throw new Error(`Invalid board column: ${data.columnId}`);
+    }
+    resolvedColumnId = targetCol.id;
+  } else {
+    targetCol = await db.boardColumn.findFirst({
+      where: { systemKey: "BACKLOG" },
+      select: { id: true, systemKey: true },
+    });
+    resolvedColumnId = targetCol ? targetCol.id : "col_backlog";
+  }
+
+  // Position new tasks at the top of the resolved column
   const firstTask = await db.task.findFirst({
-    where: { projectId: data.projectId, status: "BACKLOG" },
+    where: { projectId: data.projectId, columnId: resolvedColumnId },
     orderBy: { order: "asc" },
-    select: { order: true }
+    select: { order: true },
   });
   const initialOrder = firstTask ? firstTask.order - 1000 : 1000;
+
+  const isDone = targetCol?.systemKey === "DONE";
 
   const task = await db.task.create({
     data: {
@@ -58,6 +82,8 @@ export async function createTaskAction(data: {
       creatorId: employee.id,
       priority: data.priority,
       order: initialOrder,
+      columnId: resolvedColumnId,
+      completedAt: isDone ? new Date() : undefined,
       startDate: data.startDate ? new Date(data.startDate) : undefined,
       dueDate: data.dueDate ? new Date(data.dueDate) : undefined,
       blockers: data.blockers,
@@ -82,9 +108,9 @@ export async function createTaskAction(data: {
     }
   }
 
-  revalidatePath("/projects");
-  revalidatePath(`/tasks/${task.id}`);
-  revalidatePath("/");
+  safeRevalidatePath("/projects");
+  safeRevalidatePath(`/tasks/${task.id}`);
+  safeRevalidatePath("/");
   return { success: true, taskId: task.id };
 }
 
@@ -99,7 +125,7 @@ export async function updateTaskAction(taskId: string, data: {
   blockers?: string;
 }) {
   const employee = await getCurrentEmployee();
-  const hasGlobalPerm = await checkPermission("task:update");
+  const hasGlobalPerm = await checkPermission("task:update", data.projectId);
 
   if (!data.title?.trim()) throw new Error("Task title is required.");
   assertValidPriority(data.priority);
@@ -136,16 +162,48 @@ export async function updateTaskAction(taskId: string, data: {
     }
   });
 
-  revalidatePath("/projects");
-  revalidatePath(`/tasks/${taskId}`);
-  revalidatePath("/");
+  safeRevalidatePath("/projects");
+  safeRevalidatePath(`/tasks/${taskId}`);
+  safeRevalidatePath("/");
   return { success: true, taskId: updatedTask.id };
 }
 
-export async function updateTaskStatusAction(taskId: string, newStatus: string, newOrder?: number) {
-  assertValidStatus(newStatus);
+export async function updateTaskStatusAction(taskId: string, targetColumnIdOrStatus: string, newOrder?: number) {
+  if (!targetColumnIdOrStatus || !targetColumnIdOrStatus.trim()) {
+    throw new Error("Target column is required");
+  }
   if (newOrder !== undefined && (typeof newOrder !== "number" || isNaN(newOrder))) {
     throw new Error("Invalid task order value");
+  }
+
+  // Resolve target column from BoardColumn (accepts valid columnId or legacy status/systemKey fallback)
+  let targetColumn = await db.boardColumn.findUnique({
+    where: { id: targetColumnIdOrStatus.trim() },
+  });
+
+  if (!targetColumn) {
+    const legacyMapping: Record<string, string> = {
+      BACKLOG: "col_backlog",
+      TODO: "col_todo",
+      IN_PROGRESS: "col_in_progress",
+      REVIEW: "col_review",
+      TESTING: "col_testing",
+      DONE: "col_done",
+    };
+    const mappedId = legacyMapping[targetColumnIdOrStatus.trim().toUpperCase()];
+    if (mappedId) {
+      targetColumn = await db.boardColumn.findUnique({
+        where: { id: mappedId },
+      });
+    } else {
+      targetColumn = await db.boardColumn.findFirst({
+        where: { systemKey: targetColumnIdOrStatus.trim().toUpperCase() },
+      });
+    }
+  }
+
+  if (!targetColumn) {
+    throw new Error(`Invalid board column: ${targetColumnIdOrStatus}`);
   }
 
   const employee = await getCurrentEmployee();
@@ -153,42 +211,55 @@ export async function updateTaskStatusAction(taskId: string, newStatus: string, 
 
   const task = await db.task.findUnique({
     where: { id: taskId },
-    include: { project: { include: { members: true } }, assignees: true }
+    include: {
+      column: true,
+      project: { include: { members: true } },
+      assignees: true,
+      blocking: true,
+    },
   });
 
   if (!task) throw new Error("Task not found");
 
   if (!hasGlobalPerm) {
     const isCreator = task.creatorId === employee.id;
-    const isAssignee = task.assignees.some(a => a.id === employee.id);
-    const isProjectMember = task.project.members.some(m => m.employeeId === employee.id);
-    if (!isCreator && !isAssignee && !isProjectMember) throw new Error("You do not have permission for this action.");
+    const isAssignee = task.assignees.some((a) => a.id === employee.id);
+    const isProjectMember = task.project.members.some((m) => m.employeeId === employee.id);
+    if (!isCreator && !isAssignee && !isProjectMember) {
+      throw new Error("You do not have permission for this action.");
+    }
   }
+
+  const wasDone = task.column?.systemKey === "DONE";
+  const isDone = targetColumn.systemKey === "DONE";
+
+  const isEnteringDone = isDone && !wasDone;
+  const isLeavingDone = !isDone && wasDone;
+  // If staying in Done (isDone && wasDone), completion fields are preserved and NOT reset
 
   const updatedTask = await db.task.update({
     where: { id: taskId },
-    data: { 
-      status: newStatus,
+    data: {
+      columnId: targetColumn.id,
       ...(newOrder !== undefined ? { order: newOrder } : {}),
-      completedAt: newStatus === "DONE" ? new Date() : null,
-      completionNote: newStatus === "DONE" ? undefined : null,
-      prLink: newStatus === "DONE" ? undefined : null
+      ...(isEnteringDone ? { completedAt: new Date() } : {}),
+      ...(isLeavingDone ? { completedAt: null, completionNote: null, prLink: null } : {}),
     },
-    include: { blocking: true }
+    include: { blocking: true, column: true },
   });
 
   // Auto-unblock dependent tasks if this task is now DONE
-  if (newStatus === "DONE" && updatedTask.blocking && updatedTask.blocking.length > 0) {
+  if (isEnteringDone && updatedTask.blocking && updatedTask.blocking.length > 0) {
     await db.task.updateMany({
       where: { id: { in: updatedTask.blocking.map((t) => t.id) } },
-      data: { blockedById: null }
+      data: { blockedById: null },
     });
   }
 
-  revalidatePath("/tasks");
-  revalidatePath(`/tasks/${taskId}`);
-  revalidatePath("/projects");
-  revalidatePath("/");
+  safeRevalidatePath("/tasks");
+  safeRevalidatePath(`/tasks/${taskId}`);
+  safeRevalidatePath("/projects");
+  safeRevalidatePath("/");
   return { success: true, task: updatedTask };
 }
 
@@ -217,9 +288,9 @@ export async function updateTaskPriorityAction(taskId: string, newPriority: stri
     data: { priority: newPriority }
   });
 
-  revalidatePath("/tasks");
-  revalidatePath(`/tasks/${taskId}`);
-  revalidatePath("/");
+  safeRevalidatePath("/tasks");
+  safeRevalidatePath(`/tasks/${taskId}`);
+  safeRevalidatePath("/");
   return { success: true, task };
 }
 
@@ -246,12 +317,20 @@ export async function setTaskBlockerAction(taskId: string, blockerTaskId: string
     data: { blockedById: blockerTaskId }
   });
 
-  revalidatePath("/tasks");
-  revalidatePath(`/tasks/${taskId}`);
+  safeRevalidatePath("/tasks");
+  safeRevalidatePath(`/tasks/${taskId}`);
   return { success: true, task: updatedTask };
 }
 
-export async function createSubtaskAction(parentId: string, data: { title: string; assigneeId?: string; priority: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL" }) {
+export async function createSubtaskAction(
+  parentId: string,
+  data: {
+    title: string;
+    assigneeId?: string;
+    priority: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+    columnId?: string;
+  }
+) {
   const employee = await getCurrentEmployee();
   const hasGlobalPerm = await checkPermission("task:create");
 
@@ -260,7 +339,7 @@ export async function createSubtaskAction(parentId: string, data: { title: strin
 
   const parentTask = await db.task.findUnique({ 
     where: { id: parentId },
-    include: { project: { include: { members: true } }, assignees: true }
+    include: { project: { include: { members: true } }, assignees: true, column: true }
   });
 
   if (!parentTask) throw new Error("Parent task not found");
@@ -277,6 +356,31 @@ export async function createSubtaskAction(parentId: string, data: { title: strin
     }
   }
 
+  // Resolve subtask columnId: explicit selection -> parent task columnId -> Backlog system column
+  let resolvedColumnId: string;
+  let targetCol: { id: string; systemKey: string | null } | null = null;
+  if (data.columnId && data.columnId.trim()) {
+    targetCol = await db.boardColumn.findUnique({
+      where: { id: data.columnId.trim() },
+      select: { id: true, systemKey: true },
+    });
+    if (!targetCol) {
+      throw new Error(`Invalid board column: ${data.columnId}`);
+    }
+    resolvedColumnId = targetCol.id;
+  } else if (parentTask.columnId) {
+    resolvedColumnId = parentTask.columnId;
+    targetCol = parentTask.column;
+  } else {
+    targetCol = await db.boardColumn.findFirst({
+      where: { systemKey: "BACKLOG" },
+      select: { id: true, systemKey: true },
+    });
+    resolvedColumnId = targetCol ? targetCol.id : "col_backlog";
+  }
+
+  const isDone = targetCol?.systemKey === "DONE";
+
   const subtask = await db.task.create({
     data: {
       title: data.title.trim(),
@@ -284,12 +388,14 @@ export async function createSubtaskAction(parentId: string, data: { title: strin
       parentId: parentId,
       creatorId: employee.id,
       priority: data.priority,
+      columnId: resolvedColumnId,
+      completedAt: isDone ? new Date() : undefined,
       assignees: data.assigneeId ? { connect: [{ id: data.assigneeId }] } : undefined,
     }
   });
 
-  revalidatePath("/tasks");
-  revalidatePath(`/tasks/${parentId}`);
+  safeRevalidatePath("/tasks");
+  safeRevalidatePath(`/tasks/${parentId}`);
   return { success: true, subtask };
 }
 
@@ -328,8 +434,8 @@ export async function assignTaskAction(taskId: string, assigneeId: string | null
     });
   }
 
-  revalidatePath("/tasks");
-  revalidatePath(`/tasks/${taskId}`);
+  safeRevalidatePath("/tasks");
+  safeRevalidatePath(`/tasks/${taskId}`);
   return { success: true, task };
 }
 
@@ -364,9 +470,9 @@ export async function deleteTaskAction(taskId: string) {
     }
   }
 
-  revalidatePath("/tasks");
-  revalidatePath("/projects");
-  revalidatePath("/");
+  safeRevalidatePath("/tasks");
+  safeRevalidatePath("/projects");
+  safeRevalidatePath("/");
   return { success: true };
 }
 
@@ -408,7 +514,7 @@ export async function rebalanceColumnTasksAction(orderedTaskIds: string[]) {
     )
   );
 
-  revalidatePath("/tasks");
+  safeRevalidatePath("/tasks");
   return { success: true };
 }
 

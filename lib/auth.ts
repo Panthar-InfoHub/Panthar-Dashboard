@@ -7,13 +7,28 @@ import { auth, currentUser } from "@clerk/nextjs/server";
 import { db } from "@/lib/db";
 import { hasPermission, type Permission } from "@/lib/permissions";
 import type { Employee } from "@/lib/generated/prisma";
+import { cache } from "react";
+import { AsyncLocalStorage } from "node:async_hooks";
 
 export type AuthEmployee = Pick<
   Employee,
   "id" | "clerkId" | "email" | "firstName" | "lastName" | "role" | "status" | "teamId" | "avatarUrl" | "designation"
 >;
 
-import { cache } from "react";
+// Test-only in-memory storage for test runners. Never accessible from external HTTP requests.
+const testAuthStorage = new AsyncLocalStorage<AuthEmployee>();
+
+/**
+ * Test-only authentication context isolation.
+ * Allows integration tests to run with an explicit test employee without active Clerk HTTP sessions.
+ * Strictly blocked in production environments to prevent authentication spoofing.
+ */
+export function runWithTestEmployee<T>(employee: AuthEmployee, fn: () => Promise<T>): Promise<T> {
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("Security violation: Test auth context cannot be used in production.");
+  }
+  return testAuthStorage.run(employee, fn);
+}
 
 /**
  * Resolve the current Clerk session → our Employee record.
@@ -21,7 +36,27 @@ import { cache } from "react";
  * Includes Just-In-Time (JIT) syncing if the webhook hasn't fired yet.
  */
 export const getCurrentEmployee = cache(async (): Promise<AuthEmployee> => {
-  const { userId } = await auth();
+  // Check for test isolation context (only outside production)
+  if (process.env.NODE_ENV !== "production") {
+    const testEmployee = testAuthStorage.getStore();
+    if (testEmployee) {
+      if (testEmployee.status === "INACTIVE") {
+        throw new Error("FORBIDDEN: This account has been deactivated.");
+      }
+      return testEmployee;
+    }
+  }
+
+  let userId: string | null = null;
+  try {
+    const authResult = await auth();
+    userId = authResult.userId;
+  } catch (err: any) {
+    if (err && typeof err === "object" && (err.digest || err.message?.includes("Dynamic server usage"))) {
+      throw err;
+    }
+    throw new Error("Unauthorized: no active session");
+  }
 
   if (!userId) {
     throw new Error("Unauthorized: no active session");
