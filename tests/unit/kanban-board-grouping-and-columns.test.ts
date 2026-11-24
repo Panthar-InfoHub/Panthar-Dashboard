@@ -2,7 +2,6 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
   BASELINE_COLUMNS,
-  LEGACY_STATUS_TO_COLUMN_ID,
   getEffectiveColumnId,
   type KanbanColumn,
 } from "../../lib/validations/board-column";

@@ -134,8 +134,9 @@ async function main() {
     let protectionWorked = false;
     try {
       runSql(db1, `DELETE FROM public."BoardColumn" WHERE id = 'col_backlog';`);
-    } catch (e: any) {
-      if (e.message.includes("Cannot delete system board column")) {
+    } catch (e: unknown) {
+      const err = e as Error;
+      if (err.message.includes("Cannot delete system board column")) {
         protectionWorked = true;
       }
     }
@@ -155,7 +156,7 @@ async function main() {
   console.log(`\n[Scenario 2] Data preservation verification: ${db2}`);
   try {
     createDb(db2);
-    const dbUrl = `postgresql://${PG_USER}:${PG_PASS}@${PG_HOST}:${PG_PORT}/${db2}?schema=public`;
+    // const dbUrl = `postgresql://${PG_USER}:${PG_PASS}@${PG_HOST}:${PG_PORT}/${db2}?schema=public`;
 
     // Apply migrations up to Stage 1B (migrations 0 to 7)
     // We apply them by reading SQL files or applying migration directories before Contract
@@ -270,9 +271,10 @@ async function main() {
     let abortErrorMsg = "";
     try {
       runSqlFile(db3, `prisma/contract-migrations/20261121200000_contract_board_columns/migration.sql`);
-    } catch (e: any) {
-      abortErrorMsg = e.message;
-      if (e.message.includes("Contract migration safety abort: 1 task(s) have NULL or unmapped columnId")) {
+    } catch (e: unknown) {
+      const err = e as Error;
+      abortErrorMsg = err.message;
+      if (err.message.includes("Contract migration safety abort: 1 task(s) have NULL or unmapped columnId")) {
         abortedCorrectly = true;
       }
     }
@@ -343,8 +345,9 @@ async function main() {
     let abortedCorrectly = false;
     try {
       runSqlFile(db4, `prisma/contract-migrations/20261121200000_contract_board_columns/migration.sql`);
-    } catch (e: any) {
-      if (e.message.includes("Contract migration safety abort: 1 task(s) have NULL or unmapped columnId")) {
+    } catch (e: unknown) {
+      const err = e as Error;
+      if (err.message.includes("Contract migration safety abort: 1 task(s) have NULL or unmapped columnId")) {
         abortedCorrectly = true;
       }
     }
@@ -387,8 +390,9 @@ async function main() {
     let abortedCorrectly = false;
     try {
       runSqlFile(db5, `prisma/contract-migrations/20261121200000_contract_board_columns/migration.sql`);
-    } catch (e: any) {
-      if (e.message.includes("Contract migration safety abort: Replacement index Task_columnId_order_idx not found in pg_catalog")) {
+    } catch (e: unknown) {
+      const err = e as Error;
+      if (err.message.includes("Contract migration safety abort: Replacement index Task_columnId_order_idx not found in pg_catalog")) {
         abortedCorrectly = true;
       }
     }
@@ -445,8 +449,9 @@ async function main() {
     let abortedCorrectly = false;
     try {
       runSqlFile(db6, `prisma/contract-migrations/20261121200000_contract_board_columns/migration.sql`);
-    } catch (e: any) {
-      if (e.message.includes("Contract migration safety abort: TaskStatus enum is still referenced by active column(s): public.AuditTaskLog.oldStatus")) {
+    } catch (e: unknown) {
+      const err = e as Error;
+      if (err.message.includes("Contract migration safety abort: TaskStatus enum is still referenced by active column(s): public.AuditTaskLog.oldStatus")) {
         abortedCorrectly = true;
       }
     }

@@ -113,7 +113,7 @@ export async function getDownloadUrl(
   const command = new GetObjectCommand({
     Bucket: bucket,
     Key: key,
-    ResponseContentDisposition: `attachment; filename="${asciiFallback}"; filename*=UTF8''${encodedFileName}`,
+    ResponseContentDisposition: `attachment; filename="${asciiFallback}"; filename*=UTF-8''${encodedFileName}`,
   });
 
   return getSignedUrl(client, command, { expiresIn: 300 });

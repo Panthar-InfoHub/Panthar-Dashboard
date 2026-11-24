@@ -1,8 +1,9 @@
 "use server";
 
 import { db } from "@/lib/db";
-import { getCurrentEmployee, checkPermission, type AuthEmployee } from "@/lib/auth";
+import { getCurrentEmployee, type AuthEmployee } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
+import { assertCanViewTask } from "@/lib/queries/task.queries";
 
 function safeRevalidatePath(path: string, type?: "page" | "layout") {
   try {
@@ -21,38 +22,15 @@ import {
 // ─── Authorization Helpers ───
 
 /**
- * Ensures the authenticated caller has permission to modify checklist items for a given task.
- * Authorization order:
- * 1. Global `task:update` permission (ADMIN, MANAGER, etc.)
- * 2. Task creator (`task.creatorId === employee.id`)
- * 3. Task assignee (`task.assignees.some(...)`)
- * 4. Project member (`task.project.members.some(...)`)
+ * Ensures the authenticated caller has permission to view and modify checklist items for a given task.
+ * Centralized authorization delegates to `assertCanViewTask`.
  */
 async function assertCanEditTaskChecklist(taskId: string, employee: AuthEmployee) {
-  const hasGlobalPerm = await checkPermission("task:update");
-  if (hasGlobalPerm) return;
-
-  const task = await db.task.findUnique({
-    where: { id: taskId },
-    select: {
-      id: true,
-      creatorId: true,
-      assignees: { select: { id: true } },
-      project: { select: { members: { select: { employeeId: true } } } },
-    },
-  });
-
+  const task = await assertCanViewTask(taskId, employee);
   if (!task) {
     throw new Error("Task not found.");
   }
-
-  const isCreator = task.creatorId === employee.id;
-  const isAssignee = task.assignees.some((a) => a.id === employee.id);
-  const isProjectMember = task.project?.members.some((m) => m.employeeId === employee.id);
-
-  if (!isCreator && !isAssignee && !isProjectMember) {
-    throw new Error("You do not have permission for this action.");
-  }
+  return task;
 }
 
 /**
@@ -64,14 +42,6 @@ async function assertCanEditChecklistItem(itemId: string, employee: AuthEmployee
     select: {
       id: true,
       taskId: true,
-      task: {
-        select: {
-          id: true,
-          creatorId: true,
-          assignees: { select: { id: true } },
-          project: { select: { members: { select: { employeeId: true } } } },
-        },
-      },
     },
   });
 
@@ -79,17 +49,7 @@ async function assertCanEditChecklistItem(itemId: string, employee: AuthEmployee
     throw new Error("Checklist item not found.");
   }
 
-  const hasGlobalPerm = await checkPermission("task:update");
-  if (hasGlobalPerm) return item;
-
-  const isCreator = item.task.creatorId === employee.id;
-  const isAssignee = item.task.assignees.some((a) => a.id === employee.id);
-  const isProjectMember = item.task.project?.members.some((m) => m.employeeId === employee.id);
-
-  if (!isCreator && !isAssignee && !isProjectMember) {
-    throw new Error("You do not have permission for this action.");
-  }
-
+  await assertCanViewTask(item.taskId, employee);
   return item;
 }
 
@@ -120,9 +80,18 @@ export async function createChecklistItemAction(data: { taskId: string; title: s
       title,
       order: nextOrder,
       isCompleted: false,
+      createdById: employee.id,
     },
     include: {
       completedBy: {
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          avatarUrl: true,
+        },
+      },
+      createdBy: {
         select: {
           id: true,
           firstName: true,

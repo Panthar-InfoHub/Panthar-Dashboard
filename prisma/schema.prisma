@@ -95,7 +95,8 @@ model Employee {
   // ── Per-user permission overrides ──
   employeePermissions EmployeePermission[]
 
-  // ── Task checklist completions ──
+  // ── Task checklist completions and creations ──
+  createdChecklistItems   TaskChecklistItem[] @relation("ChecklistItemCreatedBy")
   completedChecklistItems TaskChecklistItem[] @relation("ChecklistItemCompletedBy")
   
   // ── Task attachments ──
@@ -256,12 +257,15 @@ model TaskChecklistItem {
   completedAt   DateTime?
   completedById String?
   completedBy   Employee? @relation("ChecklistItemCompletedBy", fields: [completedById], references: [id], onDelete: SetNull)
+  createdById   String?
+  createdBy     Employee? @relation("ChecklistItemCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([taskId])
   @@index([taskId, order])
+  @@index([createdById])
 }
 
 model TaskAttachment {

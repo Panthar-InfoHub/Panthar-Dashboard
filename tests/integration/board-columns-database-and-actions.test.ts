@@ -240,7 +240,7 @@ describe("Board Columns Database & Actions Integration Tests", () => {
     it("rejects client attempts to spoof admin identity via extra argument injection", async () => {
       // Attempting to pass a spoofed admin identity as an extra argument to the server action
       await assert.rejects(
-        () => (createBoardColumnAction as any)("Hacked Column", "#a855f7", { id: "fake_id", role: "ADMIN" }),
+        () => (createBoardColumnAction as unknown as (...args: unknown[]) => Promise<unknown>)("Hacked Column", "#a855f7", { id: "fake_id", role: "ADMIN" }),
         {
           name: "Error",
           message: /Unauthorized/,
@@ -376,7 +376,10 @@ describe("Board Columns Database & Actions Integration Tests", () => {
 
       // Clean up the temporary columns created to test quota
       for (const id of tempIds) {
-        await deleteBoardColumnAction(id);
+        const exists = await db.boardColumn.findUnique({ where: { id } });
+        if (exists) {
+          await deleteBoardColumnAction(id);
+        }
         const idx = createdColumnIds.indexOf(id);
         if (idx !== -1) createdColumnIds.splice(idx, 1);
       }
@@ -520,7 +523,10 @@ describe("Board Columns Database & Actions Integration Tests", () => {
         },
       });
       for (const col of remainingCustom) {
-        await deleteBoardColumnAction(col.id);
+        const exists = await db.boardColumn.findUnique({ where: { id: col.id } });
+        if (exists) {
+          await deleteBoardColumnAction(col.id);
+        }
       }
 
       // Now exactly the 4 baseline manageable columns remain: Todo, In Progress, Review, Testing

@@ -242,7 +242,7 @@ async function main() {
 
     // Read Tailwind / CSS
     const cssPath = path.join(__dirname, "../app/globals.css");
-    const globalsCss = fs.readFileSync(cssPath, "utf-8");
+    /* const globalsCss = */ fs.readFileSync(cssPath, "utf-8");
 
     const htmlContent = `<!DOCTYPE html>
 <html lang="en" class="dark">
@@ -380,7 +380,7 @@ async function main() {
       if (testTeamId) await db.team.delete({ where: { id: testTeamId } });
       if (testLeadId) await db.employee.delete({ where: { id: testLeadId } });
       if (testUnauthorizedId) await db.employee.delete({ where: { id: testUnauthorizedId } });
-    } catch (e) {
+    } catch {
       // Ignore teardown cleanup errors
     }
   }

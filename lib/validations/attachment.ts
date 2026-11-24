@@ -65,7 +65,7 @@ export function validateAttachmentKeyPrefix(key: string, taskId: string): boolea
 export function buildContentDispositionHeader(originalFileName: string): string {
   const encoded = encodeURIComponent(originalFileName);
   const asciiFallback = originalFileName.replace(/[^a-zA-Z0-9._-]/g, "_") || "attachment";
-  return `attachment; filename="${asciiFallback}"; filename*=UTF8''${encoded}`;
+  return `attachment; filename="${asciiFallback}"; filename*=UTF-8''${encoded}`;
 }
 
 /**

@@ -281,6 +281,7 @@ export function TaskChecklist({
                       variant="ghost"
                       className="h-7 w-7 p-0 text-emerald-600 hover:text-emerald-700 hover:bg-emerald-500/10"
                       title="Save (Enter)"
+                      aria-label="Save changes"
                     >
                       <Check className="h-3.5 w-3.5" />
                     </Button>
@@ -291,6 +292,7 @@ export function TaskChecklist({
                       onClick={() => setEditingItemId(null)}
                       className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
                       title="Cancel (Esc)"
+                      aria-label="Cancel editing"
                     >
                       <X className="h-3.5 w-3.5" />
                     </Button>
@@ -353,6 +355,7 @@ export function TaskChecklist({
                     onClick={() => handleStartEdit(item)}
                     className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground"
                     title="Edit item"
+                    aria-label="Edit item"
                   >
                     <Pencil className="h-3 w-3" />
                   </Button>
@@ -363,6 +366,7 @@ export function TaskChecklist({
                     onClick={() => handleDelete(item.id)}
                     className="h-6 w-6 p-0 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
                     title="Delete item"
+                    aria-label="Delete item"
                   >
                     <Trash2 className="h-3 w-3" />
                   </Button>
@@ -375,7 +379,7 @@ export function TaskChecklist({
         {/* Empty State */}
         {items.length === 0 && (
           <div className="p-4 text-center text-xs text-muted-foreground">
-            No checklist items yet. Add one below.
+            No checklist items yet. Add the first step below.
           </div>
         )}
       </div>

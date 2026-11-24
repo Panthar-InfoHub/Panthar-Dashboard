@@ -43,7 +43,8 @@ export const RELEASE_1_EXPECTED_MIGRATIONS = [
   "20261119171000_add_task_checklist",
   "20261120113500_add_task_attachments",
   "20261121100000_expand_board_columns_schema",
-  "20261121110000_create_replacement_indexes_concurrently"
+  "20261121110000_create_replacement_indexes_concurrently",
+  "20261124130000_add_checklist_item_created_by"
 ];
 
 export interface BootstrapOptions {
@@ -131,7 +132,7 @@ export function runBootstrap({ dbUrl, directUrl, silent = false }: BootstrapOpti
       );
       isStage1BApplied = parseInt(appliedCount, 10) > 0;
     }
-  } catch (err) {
+  } catch {
     // Database is fresh/empty
     hasPrismaMigrationsTable = false;
     isStage1BApplied = false;
@@ -190,8 +191,9 @@ export function runBootstrap({ dbUrl, directUrl, silent = false }: BootstrapOpti
       `DATABASE_URL="${dbUrl}" DIRECT_URL="${targetDirectUrl}" npx prisma migrate deploy`,
       { cwd: REPO_ROOT, encoding: "utf8", shell: "/usr/bin/bash" }
     );
-  } catch (err: any) {
-    const combinedMsg = `${err.stdout || ""}\n${err.stderr || ""}\n${err.message || ""}`;
+  } catch (err: unknown) {
+    const errObj = err as { stdout?: string; stderr?: string; message?: string };
+    const combinedMsg = `${errObj?.stdout || ""}\n${errObj?.stderr || ""}\n${(err as Error)?.message || ""}`;
     if (combinedMsg.includes("25001") || combinedMsg.includes("CREATE INDEX CONCURRENTLY cannot run inside a transaction block")) {
       log(`Caught known Prisma engine transaction wrapper limit on Stage 1B.`);
     } else {
@@ -221,14 +223,21 @@ export function runBootstrap({ dbUrl, directUrl, silent = false }: BootstrapOpti
     { cwd: REPO_ROOT, encoding: "utf8", shell: "/usr/bin/bash" }
   );
 
-  // Step 5e: Verify Release 1 Boundary (EXACTLY 8 MIGRATIONS, CONTRACT EXCLUDED)
+  // Step 5d-2: Apply subsequent approved non-destructive migrations
+  log(`Step 4b: Applying remaining approved Release 1 migrations...`);
+  execSync(
+    `DATABASE_URL="${dbUrl}" DIRECT_URL="${targetDirectUrl}" npx prisma migrate deploy`,
+    { cwd: REPO_ROOT, encoding: "utf8", shell: "/usr/bin/bash" }
+  );
+
+  // Step 5e: Verify Release 1 Boundary (EXACTLY 9 MIGRATIONS, CONTRACT EXCLUDED)
   log(`Step 5: Verifying Release 1 boundary in _prisma_migrations...`);
   const appliedMigrationsRaw = runPsqlQuery(
     `SELECT migration_name FROM public."_prisma_migrations" WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL ORDER BY started_at ASC;`
   );
   const appliedMigrations = appliedMigrationsRaw.split("\n").map(s => s.trim()).filter(Boolean);
-  if (appliedMigrations.length !== 8) {
-    throw new Error(`Release 1 boundary violation: Expected exactly 8 applied migrations, found ${appliedMigrations.length}:\n${appliedMigrations.join("\n")}`);
+  if (appliedMigrations.length !== RELEASE_1_EXPECTED_MIGRATIONS.length) {
+    throw new Error(`Release 1 boundary violation: Expected exactly ${RELEASE_1_EXPECTED_MIGRATIONS.length} applied migrations, found ${appliedMigrations.length}:\n${appliedMigrations.join("\n")}`);
   }
   for (let i = 0; i < RELEASE_1_EXPECTED_MIGRATIONS.length; i++) {
     if (appliedMigrations[i] !== RELEASE_1_EXPECTED_MIGRATIONS[i]) {
@@ -301,8 +310,9 @@ if (require.main === module) {
   }
   try {
     runBootstrap({ dbUrl });
-  } catch (err: any) {
-    console.error("Bootstrap failed:", err.message);
+  } catch (err: unknown) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    console.error("Bootstrap failed:", errMsg);
     process.exit(1);
   }
 }

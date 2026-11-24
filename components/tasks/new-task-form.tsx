@@ -298,7 +298,7 @@ export function NewTaskForm({
         const filesToUpload = pendingFiles.filter((item) => fileStatuses[item.id] !== "success");
 
         if (filesToUpload.length === 0) {
-          toast.success(initialData ? "Task updated successfully!" : "Task created successfully!");
+          toast.success(initialData ? "Task updated" : "Task created");
           router.refresh();
           router.push(initialData ? `/tasks/${activeTaskId}` : "/tasks");
           return;

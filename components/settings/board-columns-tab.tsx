@@ -127,7 +127,7 @@ export function BoardColumnsTab({ initialColumns }: BoardColumnsTabProps) {
       try {
         const res = await reorderBoardColumnsAction(newManageableIds);
         if (res?.success) {
-          toast.success("Column order updated successfully.");
+          toast.success("Column order updated.");
           await refreshColumns();
         }
       } catch (err: unknown) {
@@ -232,7 +232,7 @@ export function BoardColumnsTab({ initialColumns }: BoardColumnsTabProps) {
       try {
         const res = await createBoardColumnAction(trimmed, newColor);
         if (res?.success) {
-          toast.success(`Column "${trimmed}" created successfully.`);
+          toast.success(`Column "${trimmed}" created.`);
           setIsCreateOpen(false);
           await refreshColumns();
         }
@@ -301,7 +301,7 @@ export function BoardColumnsTab({ initialColumns }: BoardColumnsTabProps) {
           await updateBoardColumnColorAction(editingCol.id, editColor);
         }
 
-        toast.success(`Column "${trimmed}" updated successfully.`);
+        toast.success(`Column "${trimmed}" updated.`);
         setIsEditOpen(false);
         await refreshColumns();
       } catch (err: unknown) {
@@ -325,7 +325,7 @@ export function BoardColumnsTab({ initialColumns }: BoardColumnsTabProps) {
       try {
         const res = await deleteBoardColumnAction(deletingCol.id);
         if (res?.success) {
-          toast.success(`Column "${deletingCol.name}" deleted successfully.`);
+          toast.success(`Column "${deletingCol.name}" deleted.`);
           setIsDeleteOpen(false);
           setDeletingCol(null);
           await refreshColumns();

@@ -1,7 +1,7 @@
 "use server";
 
 import { db } from "@/lib/db";
-import { getCurrentEmployee, type AuthEmployee } from "@/lib/auth";
+import { getCurrentEmployee } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
 import {
   validateColumnName,
@@ -265,68 +265,80 @@ export async function deleteBoardColumnAction(id: string) {
 
   const validatedId = validateColumnId(id);
 
-  await db.$transaction(
-    async (tx) => {
-      await tx.$queryRawUnsafe('SELECT id FROM "BoardColumn" FOR UPDATE');
+  try {
+    await db.$transaction(
+      async (tx) => {
+        await tx.$queryRawUnsafe('SELECT id FROM "BoardColumn" FOR UPDATE');
 
-      const column = await tx.boardColumn.findUnique({
-        where: { id: validatedId },
-      });
+        const column = await tx.boardColumn.findUnique({
+          where: { id: validatedId },
+        });
 
-      if (!column) {
-        throw new Error("NOT_FOUND: Board column not found.");
-      }
+        if (!column) {
+          throw new Error("NOT_FOUND: Board column not found.");
+        }
 
-      // Invariant: System columns cannot be deleted
-      if (column.systemKey !== null) {
-        throw new Error("FORBIDDEN: Cannot delete system columns (Backlog / Done).");
-      }
+        // Invariant: System columns cannot be deleted
+        if (column.systemKey !== null) {
+          throw new Error("FORBIDDEN: Cannot delete system columns (Backlog / Done).");
+        }
 
-      // Invariant: Refuse if tasks or subtasks remain in this column
-      const taskCount = await tx.task.count({
-        where: { columnId: validatedId },
-      });
+        // Invariant: Refuse if tasks or subtasks remain in this column
+        const taskCount = await tx.task.count({
+          where: { columnId: validatedId },
+        });
 
-      if (taskCount > 0) {
-        throw new Error(
-          `CANNOT_DELETE_NON_EMPTY_COLUMN: Cannot delete column containing ${taskCount} task(s). Move or delete tasks first.`
-        );
-      }
+        if (taskCount > 0) {
+          throw new Error(
+            `CANNOT_DELETE_NON_EMPTY_COLUMN: Cannot delete column containing ${taskCount} task(s). Move or delete tasks first.`
+          );
+        }
 
-      // Delete the column
-      await tx.boardColumn.delete({
-        where: { id: validatedId },
-      });
+        // Delete the column
+        await tx.boardColumn.delete({
+          where: { id: validatedId },
+        });
 
-      // Renormalize remaining manageable columns
-      const remaining = await tx.boardColumn.findMany({
-        where: { systemKey: null },
-        orderBy: { position: "asc" },
-        select: { id: true },
-      });
+        // Renormalize remaining manageable columns
+        const remaining = await tx.boardColumn.findMany({
+          where: { systemKey: null },
+          orderBy: { position: "asc" },
+          select: { id: true },
+        });
 
-      const M = remaining.length;
+        const M = remaining.length;
 
-      // Update positions concurrently inside transaction
-      await Promise.all([
-        tx.boardColumn.update({
-          where: { systemKey: "BACKLOG" },
-          data: { position: 1000.0 },
-        }),
-        tx.boardColumn.update({
-          where: { systemKey: "DONE" },
-          data: { position: (M + 2) * 1000.0 },
-        }),
-        ...remaining.map((col, i) =>
+        // Update positions concurrently inside transaction
+        await Promise.all([
           tx.boardColumn.update({
-            where: { id: col.id },
-            data: { position: (i + 2) * 1000.0 },
-          })
-        ),
-      ]);
-    },
-    { maxWait: 15000, timeout: 30000 }
-  );
+            where: { systemKey: "BACKLOG" },
+            data: { position: 1000.0 },
+          }),
+          tx.boardColumn.update({
+            where: { systemKey: "DONE" },
+            data: { position: (M + 2) * 1000.0 },
+          }),
+          ...remaining.map((col, i) =>
+            tx.boardColumn.update({
+              where: { id: col.id },
+              data: { position: (i + 2) * 1000.0 },
+            })
+          ),
+        ]);
+      },
+      { maxWait: 15000, timeout: 30000 }
+    );
+  } catch (err: unknown) {
+    if (
+      (err && typeof err === "object" && "code" in err && (err as { code: string }).code === "P2003") ||
+      (err instanceof Error && err.message.includes("Foreign key constraint failed"))
+    ) {
+      throw new Error(
+        "CANNOT_DELETE_NON_EMPTY_COLUMN: Cannot delete column containing active tasks. Move or delete tasks first."
+      );
+    }
+    throw err;
+  }
 
   revalidateBoardPaths();
   return { success: true };

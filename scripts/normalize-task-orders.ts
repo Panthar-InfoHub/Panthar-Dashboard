@@ -1,4 +1,5 @@
 import { db } from "../lib/db";
+import type { Prisma } from "../lib/generated/prisma";
 
 async function main() {
   console.log("Normalizing existing task orders in database by BoardColumn...");
@@ -34,7 +35,7 @@ async function main() {
 
   // Check for any unassigned tasks as a safety safeguard
   const unassignedTasks = await db.task.findMany({
-    where: { columnId: null } as any,
+    where: { columnId: null } as unknown as Prisma.TaskWhereInput,
     orderBy: { updatedAt: "desc" },
     select: { id: true, title: true }
   });

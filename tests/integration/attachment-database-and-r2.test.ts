@@ -242,7 +242,7 @@ describe("Attachment Database & Cloudflare R2 Integration Tests", () => {
     const unicodeFileName = "rapport_d'évaluation_日本語.pdf";
     const downloadUrl = await getDownloadUrl("dummy-key", unicodeFileName);
     const decoded = decodeURIComponent(downloadUrl);
-    assert.ok(decoded.includes("filename*=UTF8''"));
+    assert.ok(decoded.includes("filename*=UTF-8''"));
     assert.ok(downloadUrl.includes("response-content-disposition="));
   });
 

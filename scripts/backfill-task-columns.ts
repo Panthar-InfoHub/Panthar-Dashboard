@@ -5,6 +5,7 @@
 
 import "./load-env";
 import { db } from "../lib/db";
+import type { Prisma } from "../lib/generated/prisma";
 
 export interface BackfillOptions {
   batchSize?: number;
@@ -103,7 +104,7 @@ export async function backfillTaskColumns(options: BackfillOptions = {}): Promis
 
   // ── Step 2: Assessment of Work Required ──
   const totalTasks = await db.task.count();
-  const initialRemaining = await db.task.count({ where: { columnId: null } as any });
+  const initialRemaining = await db.task.count({ where: { columnId: null } as unknown as Prisma.TaskWhereInput });
   log(`[Status] Total tasks in database: ${totalTasks}`);
   log(`[Status] Tasks requiring backfill (columnId IS NULL): ${initialRemaining}`);
 
@@ -153,7 +154,7 @@ export async function backfillTaskColumns(options: BackfillOptions = {}): Promis
 
     if (updatedInBatch === 0) {
       // Check if any NULL tasks remain that were temporarily skipped due to active locks
-      const remainingNull = await db.task.count({ where: { columnId: null } as any });
+      const remainingNull = await db.task.count({ where: { columnId: null } as unknown as Prisma.TaskWhereInput });
       if (remainingNull > 0) {
         log(`[Contention] ${remainingNull} task(s) currently locked by concurrent operations. Waiting 200ms...`);
         await sleep(200);
@@ -164,7 +165,7 @@ export async function backfillTaskColumns(options: BackfillOptions = {}): Promis
 
     totalBackfilled += updatedInBatch;
     batchesExecuted++;
-    const remainingNull = await db.task.count({ where: { columnId: null } as any });
+    const remainingNull = await db.task.count({ where: { columnId: null } as unknown as Prisma.TaskWhereInput });
     const progressPct =
       totalTasks > 0
         ? (((totalTasks - remainingNull) / totalTasks) * 100).toFixed(1)
@@ -186,7 +187,7 @@ export async function backfillTaskColumns(options: BackfillOptions = {}): Promis
   log("────────────────────────────────────────────────────────────────────────────────");
 
   // 4a: Verify 0 tasks remain with columnId IS NULL
-  const finalRemaining = await db.task.count({ where: { columnId: null } as any });
+  const finalRemaining = await db.task.count({ where: { columnId: null } as unknown as Prisma.TaskWhereInput });
   if (finalRemaining > 0) {
     throw new Error(
       `BACKFILL AUDIT FAILURE: ${finalRemaining} tasks still have columnId = NULL after backfill loop completed.`
@@ -212,7 +213,7 @@ export async function backfillTaskColumns(options: BackfillOptions = {}): Promis
   // 4c: Verify exact count parity for all 6 legacy statuses
   const parityAudit: ParityAuditItem[] = [];
   for (const mapping of BASELINE_STATUS_MAPPINGS) {
-    const statusCount = await db.task.count({ where: { status: mapping.status } as any });
+    const statusCount = await db.task.count({ where: { status: mapping.status } as unknown as Prisma.TaskWhereInput });
     const colCount = await db.task.count({ where: { columnId: mapping.colId } });
     const match = statusCount === colCount;
     parityAudit.push({

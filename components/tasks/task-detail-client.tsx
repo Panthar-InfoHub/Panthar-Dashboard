@@ -19,7 +19,6 @@ import { TaskColumnBadge } from "@/components/tasks/task-column-badge";
 import {
   KanbanColumn,
   BASELINE_COLUMNS,
-  LEGACY_STATUS_TO_COLUMN_ID,
 } from "@/lib/validations/board-column";
 import { toast } from "sonner";
 

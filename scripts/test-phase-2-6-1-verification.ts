@@ -42,7 +42,7 @@ function createDb(name: string) {
 function dropDb(name: string) {
   try {
     execSync(`dropdb -h ${PG_HOST} -p ${PG_PORT} -U ${PG_USER} ${name}`, { env, shell: "/usr/bin/bash" });
-  } catch (_) {}
+  } catch {}
 }
 
 async function main() {
@@ -221,8 +221,9 @@ async function main() {
     try {
       execSync(`psql -h ${PG_HOST} -p ${PG_PORT} -U ${PG_USER} -d ${db3} -v ON_ERROR_STOP=1 -f "${stage1bPath}"`, { env, shell: "/usr/bin/bash" });
       throw new Error("Failure simulation FAILED: Stage 1B should have aborted!");
-    } catch (err: any) {
-      const errMsg = `${err.stdout || ""}\n${err.stderr || ""}\n${err.message || ""}`;
+    } catch (err: unknown) {
+      const errObj = err as { stdout?: string; stderr?: string; message?: string };
+      const errMsg = `${errObj?.stdout || ""}\n${errObj?.stderr || ""}\n${errObj?.message || ""}`;
       if (errMsg.includes("Stage 1B Pre-check abort: Index Task_columnId_idx on public.\"Task\" is INVALID")) {
         console.log("✓ Expected Pre-check abort caught successfully!");
         console.log(`  Details: ${errMsg.trim().split("\n").filter((l: string) => l.includes("Stage 1B Pre-check abort"))[0]}`);
@@ -249,9 +250,10 @@ async function main() {
     try {
       assertNotProduction(url);
       throw new Error(`Safeguard FAILED: Production URL was not rejected: ${url}`);
-    } catch (err: any) {
-      if (err.message.includes("SAFETY ABORT")) {
-        console.log(`✓ Rejected production URL correctly: ${err.message}`);
+    } catch (err: unknown) {
+      const errMsg = (err as Error).message;
+      if (errMsg.includes("SAFETY ABORT")) {
+        console.log(`✓ Rejected production URL correctly: ${(err as Error).message}`);
       } else {
         throw err;
       }
@@ -264,9 +266,10 @@ async function main() {
     (process.env as Record<string, string | undefined>).NODE_ENV = "production";
     assertNotProduction("postgresql://postgres:secret@localhost:5432/testdb");
     throw new Error("Safeguard FAILED: NODE_ENV=production was not rejected!");
-  } catch (err: any) {
-    if (err.message.includes("SAFETY ABORT")) {
-      console.log(`✓ Rejected NODE_ENV=production correctly: ${err.message}`);
+  } catch (err: unknown) {
+    const errMsg = (err as Error).message;
+      if (errMsg.includes("SAFETY ABORT")) {
+      console.log(`✓ Rejected NODE_ENV=production correctly: ${(err as Error).message}`);
     } else {
       throw err;
     }
@@ -280,9 +283,10 @@ async function main() {
     process.env.VERCEL_ENV = "production";
     assertNotProduction("postgresql://postgres:secret@localhost:5432/testdb");
     throw new Error("Safeguard FAILED: VERCEL_ENV=production was not rejected!");
-  } catch (err: any) {
-    if (err.message.includes("SAFETY ABORT")) {
-      console.log(`✓ Rejected VERCEL_ENV=production correctly: ${err.message}`);
+  } catch (err: unknown) {
+    const errMsg = (err as Error).message;
+      if (errMsg.includes("SAFETY ABORT")) {
+      console.log(`✓ Rejected VERCEL_ENV=production correctly: ${(err as Error).message}`);
     } else {
       throw err;
     }

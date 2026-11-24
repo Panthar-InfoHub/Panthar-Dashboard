@@ -19,7 +19,6 @@ import {
   updateTaskAction,
   updateTaskStatusAction,
   createSubtaskAction,
-  deleteTaskAction,
 } from "../../lib/actions/task.actions";
 import {
   createChecklistItemAction,
@@ -122,7 +121,9 @@ describe("Phase D: 16 User-Facing Acceptance Workflows", () => {
     if (customColId) {
       try {
         await withAdmin(() => deleteBoardColumnAction(customColId!));
-      } catch (_) {}
+      } catch {
+        // Ignored
+      }
     }
 
     // Restore baseline Done column name
@@ -136,7 +137,9 @@ describe("Phase D: 16 User-Facing Acceptance Workflows", () => {
       await db.project.deleteMany({ where: { id: testProjectId } });
       await db.team.deleteMany({ where: { id: testTeamId } });
       await db.employee.deleteMany({ where: { id: { in: [adminEmployee.id, regularEmployee.id] } } });
-    } catch (_) {}
+    } catch {
+      // Ignored
+    }
   });
 
   it("1. Admin opens Settings -> Board Columns", async () => {

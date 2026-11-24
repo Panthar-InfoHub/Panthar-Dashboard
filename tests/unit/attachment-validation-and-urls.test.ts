@@ -93,14 +93,14 @@ describe("Attachment Filename Validation & Sanitization Unit Tests", () => {
 describe("Content Disposition & Unicode Filename Encoding Unit Tests", () => {
   it("encodes standard ASCII filenames properly with forced attachment disposition", () => {
     const header = buildContentDispositionHeader("report_2026.pdf");
-    assert.strictEqual(header, `attachment; filename="report_2026.pdf"; filename*=UTF8''report_2026.pdf`);
+    assert.strictEqual(header, `attachment; filename="report_2026.pdf"; filename*=UTF-8''report_2026.pdf`);
     assert.ok(header.startsWith("attachment;"));
   });
 
   it("encodes Unicode and international characters using RFC 5987", () => {
     const unicodeName = "résumé_日本語_2026.pdf";
     const header = buildContentDispositionHeader(unicodeName);
-    assert.ok(header.includes("filename*=UTF8''r%C3%A9sum%C3%A9_%E6%97%A5%E6%9C%AC%E8%AA%9E_2026.pdf"));
+    assert.ok(header.includes("filename*=UTF-8''r%C3%A9sum%C3%A9_%E6%97%A5%E6%9C%AC%E8%AA%9E_2026.pdf"));
     assert.ok(header.startsWith("attachment;"));
   });
 

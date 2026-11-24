@@ -5,15 +5,11 @@ import {
   BASELINE_COLUMNS,
   PRESET_COLUMN_COLORS,
   HEX_COLOR_REGEX,
-  MAX_COLUMN_NAME_LENGTH,
-  RESERVED_COLUMN_NAMES,
   validateColumnName,
   assertNotReservedColumnName,
   validateColumnColor,
-  validateColumnId,
   validateReorderManageableIds,
   getEffectiveColumnId,
-  LEGACY_STATUS_TO_COLUMN_ID,
 } from "../../lib/validations/board-column";
 
 describe("Board Columns Settings UI Unit Tests", () => {

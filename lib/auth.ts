@@ -51,8 +51,12 @@ export const getCurrentEmployee = cache(async (): Promise<AuthEmployee> => {
   try {
     const authResult = await auth();
     userId = authResult.userId;
-  } catch (err: any) {
-    if (err && typeof err === "object" && (err.digest || err.message?.includes("Dynamic server usage"))) {
+  } catch (err: unknown) {
+    if (
+      err &&
+      typeof err === "object" &&
+      ("digest" in err || (err as { message?: string }).message?.includes("Dynamic server usage"))
+    ) {
       throw err;
     }
     throw new Error("Unauthorized: no active session");

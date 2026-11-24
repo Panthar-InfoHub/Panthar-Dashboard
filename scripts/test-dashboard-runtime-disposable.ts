@@ -7,7 +7,7 @@
 import { execSync } from "child_process";
 import { PrismaClient } from "../lib/generated/prisma";
 import { ColumnTypeEnum } from "@prisma/driver-adapter-utils";
-import { format, subDays, startOfDay } from "date-fns";
+import { subDays, startOfDay } from "date-fns";
 
 const PG_HOST = "localhost";
 const PG_PORT = 5432;
@@ -47,7 +47,7 @@ function createDisposableAdapter(dbName: string) {
       provider: "postgres" as const,
       adapterName: "disposable-psql-adapter",
       getConnectionInfo: () => ({ schemaName: "public", supportsRelationJoins: true }),
-      queryRaw: async ({ sql, args }: { sql: string; args: any[] }) => {
+      queryRaw: async ({ sql, args }: { sql: string; args: unknown[] }) => {
         // Replace positional parameters $1, $2, etc. with formatted SQL literals for execution
         let interpolatedSql = sql;
         if (args && args.length > 0) {
@@ -83,7 +83,7 @@ function createDisposableAdapter(dbName: string) {
         ).trim();
 
         const parsed = JSON.parse(rawOut);
-        const rowsArray = parsed.rows as Record<string, any>[];
+        const rowsArray = parsed.rows as Record<string, unknown>[];
 
         const columnNames = rowsArray.length > 0 ? Object.keys(rowsArray[0]) : [];
         const columnTypes = columnNames.map(() => ColumnTypeEnum.Text);
@@ -262,9 +262,10 @@ async function main() {
         WHERE (c."systemKey" = 'DONE' OR (t."columnId" IS NULL AND t.status = 'DONE'))
         GROUP BY DATE(t."completedAt")
       `;
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const errMsg = (err as Error).message;
       caughtExpectedError = true;
-      console.log(`✓ Caught expected error on legacy query: ${err.message.split("\n")[0]}`);
+      console.log(`✓ Caught expected error on legacy query: ${errMsg.split("\n")[0]}`);
     }
     if (!caughtExpectedError) {
       throw new Error("Old query unexpectedly succeeded without failing on missing t.status!");

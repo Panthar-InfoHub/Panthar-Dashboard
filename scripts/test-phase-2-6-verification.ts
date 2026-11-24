@@ -8,7 +8,6 @@
  */
 
 import { execSync } from "child_process";
-import fs from "fs";
 import path from "path";
 import { runBootstrap } from "./bootstrap-fresh-database";
 
@@ -35,7 +34,7 @@ function createDb(name: string) {
 function dropDb(name: string) {
   try {
     execSync(`dropdb -h ${PG_HOST} -p ${PG_PORT} -U ${PG_USER} ${name}`, { env, shell: "/usr/bin/bash" });
-  } catch (_) {}
+  } catch {}
 }
 
 async function main() {
@@ -191,8 +190,9 @@ async function main() {
     try {
       execSync(`psql -h ${PG_HOST} -p ${PG_PORT} -U ${PG_USER} -d ${db3} -v ON_ERROR_STOP=1 -f "${stage1bPath}"`, { env, shell: "/usr/bin/bash" });
       throw new Error("Failure simulation FAILED: Stage 1B should have aborted!");
-    } catch (err: any) {
-      const errMsg = `${err.stdout || ""}\n${err.stderr || ""}\n${err.message || ""}`;
+    } catch (err: unknown) {
+      const errObj = err as { stdout?: string; stderr?: string; message?: string };
+      const errMsg = `${errObj?.stdout || ""}\n${errObj?.stderr || ""}\n${errObj?.message || ""}`;
       if (errMsg.includes("Stage 1B Pre-check abort: Index Task_columnId_idx on public.\"Task\" is INVALID")) {
         console.log("✓ Expected Pre-check abort caught successfully!");
         console.log(`  Details: ${errMsg.trim().split("\n").filter((l: string) => l.includes("Stage 1B Pre-check abort"))[0]}`);

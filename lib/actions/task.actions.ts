@@ -1,7 +1,7 @@
 "use server";
 
 import { db } from "@/lib/db";
-import { requireAuth, getCurrentEmployee, checkPermission, type AuthEmployee } from "@/lib/auth";
+import { requireAuth, getCurrentEmployee, checkPermission } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
 import { getKanbanTasks } from "@/lib/queries/task.queries";
 import type { TaskPriority } from "@/lib/generated/prisma";

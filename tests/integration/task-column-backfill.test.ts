@@ -15,10 +15,17 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { db } from "../../lib/db";
+import type { Prisma } from "../../lib/generated/prisma";
 import {
   backfillTaskColumns,
   BASELINE_STATUS_MAPPINGS,
 } from "../../scripts/backfill-task-columns";
+
+interface TransitionalTaskRow {
+  id: string;
+  status?: string;
+  columnId: string | null;
+}
 
 describe("Stage 1A.1 Task Column Backfill Integration Tests (Historical Stage 1)", () => {
   const suffix = `bf_${Date.now()}`;
@@ -123,7 +130,7 @@ describe("Stage 1A.1 Task Column Backfill Integration Tests (Historical Stage 1)
     // Verify tasks start with columnId = null
     const beforeTasks = await db.task.findMany({
       where: { id: { in: Object.values(taskMap) } },
-      select: { id: true, status: true, columnId: true } as any,
+      select: { id: true, status: true, columnId: true } as unknown as Prisma.TaskSelect,
     });
     for (const t of beforeTasks) {
       assert.strictEqual(t.columnId, null, `Task ${t.id} should initially have columnId = null`);
@@ -143,7 +150,7 @@ describe("Stage 1A.1 Task Column Backfill Integration Tests (Historical Stage 1)
       const taskId = taskMap[mapping.status];
       const task = await db.task.findUnique({
         where: { id: taskId },
-        select: { id: true, status: true, columnId: true } as any,
+        select: { id: true, status: true, columnId: true } as unknown as Prisma.TaskSelect,
       });
 
       assert.ok(task, `Task ${taskId} should exist`);
@@ -153,7 +160,7 @@ describe("Stage 1A.1 Task Column Backfill Integration Tests (Historical Stage 1)
         `Status ${mapping.status} should map to ${mapping.colId}, received ${task.columnId}`
       );
       assert.strictEqual(
-        (task as any).status,
+        ((task as unknown) as TransitionalTaskRow).status,
         mapping.status,
         `Status ${mapping.status} should remain unchanged`
       );
@@ -188,7 +195,7 @@ describe("Stage 1A.1 Task Column Backfill Integration Tests (Historical Stage 1)
 
   it("3. guarantees idempotency: re-running on fully backfilled data changes zero rows", async () => {
     // All current tasks in DB are already backfilled
-    const initialNullCount = await db.task.count({ where: { columnId: null } as any });
+    const initialNullCount = await db.task.count({ where: { columnId: null } as unknown as Prisma.TaskWhereInput });
     assert.strictEqual(initialNullCount, 0, "Initial null count should be 0 before idempotent run");
 
     const result = await backfillTaskColumns({
@@ -293,10 +300,11 @@ describe("Stage 1A.1 Task Column Backfill Integration Tests (Historical Stage 1)
          VALUES ('test_bad_col_${Date.now()}', 'Bad Col', 'invalid_unmapped_status', 'BACKLOG', '${testProjectId}', '${testLeadId}', NOW(), NOW())`
       );
       assert.fail("Trigger should have rejected invalid_unmapped_status columnId");
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : String(err);
       assert.ok(
-        err.message?.includes("Trigger safety abort") || err.message?.includes("Invalid columnId"),
-        `Expected trigger safety abort error, received: ${err.message}`
+        errMsg.includes("Trigger safety abort") || errMsg.includes("Invalid columnId"),
+        `Expected trigger safety abort error, received: ${errMsg}`
       );
     }
   });
@@ -314,9 +322,9 @@ describe("Stage 1A.1 Task Column Backfill Integration Tests (Historical Stage 1)
     // The compatibility trigger automatically synchronized columnId to 'col_review'
     const afterConcurrentWrite = await db.task.findUnique({
       where: { id: taskId },
-      select: { id: true, status: true, columnId: true } as any,
+      select: { id: true, status: true, columnId: true } as unknown as Prisma.TaskSelect,
     });
-    assert.strictEqual((afterConcurrentWrite as any)?.status, "REVIEW");
+    assert.strictEqual(((afterConcurrentWrite as unknown) as TransitionalTaskRow)?.status, "REVIEW");
     assert.strictEqual(afterConcurrentWrite?.columnId, "col_review");
 
     // Now run backfill. Because columnId IS NOT NULL, backfill query (WHERE "columnId" IS NULL) skips it!
@@ -329,9 +337,9 @@ describe("Stage 1A.1 Task Column Backfill Integration Tests (Historical Stage 1)
     // Verify task status and columnId were preserved and NOT overwritten with stale BACKLOG/col_backlog
     const finalTask = await db.task.findUnique({
       where: { id: taskId },
-      select: { id: true, status: true, columnId: true } as any,
+      select: { id: true, status: true, columnId: true } as unknown as Prisma.TaskSelect,
     });
-    assert.strictEqual((finalTask as any)?.status, "REVIEW", "Status must remain REVIEW");
+    assert.strictEqual(((finalTask as unknown) as TransitionalTaskRow)?.status, "REVIEW", "Status must remain REVIEW");
     assert.strictEqual(finalTask?.columnId, "col_review", "ColumnId must remain col_review");
   });
 
